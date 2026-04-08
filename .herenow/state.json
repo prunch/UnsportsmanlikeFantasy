@@ -1,0 +1,10 @@
+{
+  "publishes": {
+    "civic-mantra-ny5c": {
+      "siteUrl": "https://civic-mantra-ny5c.here.now/",
+      "claimToken": "ae598d039b215f7dcba03893c0cb79beffaac4b051fee2bab4d5be7b9500a15d",
+      "claimUrl": "https://here.now/claim?slug=civic-mantra-ny5c&token=ae598d039b215f7dcba03893c0cb79beffaac4b051fee2bab4d5be7b9500a15d",
+      "expiresAt": "2026-04-09T15:35:52.204Z"
+    }
+  }
+}
