@@ -11,6 +11,7 @@ import { errorHandler } from './middleware/errorHandler';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
 import leaguesRouter from './routes/leagues';
+import playersRouter from './routes/players';
 import adminRouter from './routes/admin';
 import healthRouter from './routes/health';
 
@@ -49,6 +50,7 @@ app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/leagues', leaguesRouter);
+app.use('/api/players', playersRouter);
 app.use('/api/admin', adminRouter);
 
 // Error handling
