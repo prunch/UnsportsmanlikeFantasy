@@ -63,13 +63,23 @@ const POSITIONS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'K', 'DEF'] as const;
 
 // ── Player Avatar ────────────────────────────────────────────────────────────
 
-function PlayerAvatar({ src, name, size = 40 }: { src?: string | null; name: string; size?: number }) {
+function PlayerAvatar({
+  src,
+  name,
+  size = 40,
+  isDefense = false,
+}: {
+  src?: string | null;
+  name: string;
+  size?: number;
+  isDefense?: boolean;
+}) {
   const [imgError, setImgError] = useState(false);
 
   if (!src || imgError) {
     return (
       <div
-        className="rounded-full bg-slate-700 flex items-center justify-center shrink-0"
+        className={`${isDefense ? 'rounded-md' : 'rounded-full'} bg-slate-700 flex items-center justify-center shrink-0`}
         style={{ width: size, height: size }}
       >
         <UserCircle size={size * 0.7} className="text-slate-500" />
@@ -83,7 +93,7 @@ function PlayerAvatar({ src, name, size = 40 }: { src?: string | null; name: str
       alt={name}
       width={size}
       height={size}
-      className="rounded-full object-cover bg-slate-700 shrink-0"
+      className={`${isDefense ? 'rounded-md object-contain p-0.5' : 'rounded-full object-cover'} bg-slate-700 shrink-0`}
       style={{ width: size, height: size }}
       onError={() => setImgError(true)}
     />
@@ -313,7 +323,7 @@ export default function DraftRoomPage({
                   className="flex items-center gap-3 px-4 py-3 hover:bg-slate-750 transition-colors"
                 >
                   {/* Photo */}
-                  <PlayerAvatar src={player.headshot_url} name={player.name} size={40} />
+                  <PlayerAvatar src={player.headshot_url} name={player.name} size={40} isDefense={player.position === 'DEF'} />
 
                   {/* Position badge */}
                   <div
@@ -374,7 +384,7 @@ export default function DraftRoomPage({
                     >
                       {pick.player!.position}
                     </span>
-                    <PlayerAvatar src={pick.player!.headshot_url} name={pick.player!.name} size={24} />
+                    <PlayerAvatar src={pick.player!.headshot_url} name={pick.player!.name} size={24} isDefense={pick.player!.position === 'DEF'} />
                     <span className="text-white truncate">{pick.player!.name}</span>
                   </div>
                 ))}
@@ -427,7 +437,7 @@ export default function DraftRoomPage({
               .map(pick => (
                 <div key={pick.id} className="flex items-start gap-2 text-sm">
                   <span className="text-slate-500 text-xs mt-0.5">#{pick.pick}</span>
-                  <PlayerAvatar src={pick.player!.headshot_url} name={pick.player!.name} size={28} />
+                  <PlayerAvatar src={pick.player!.headshot_url} name={pick.player!.name} size={28} isDefense={pick.player!.position === 'DEF'} />
                   <div className="min-w-0">
                     <div className="flex items-center gap-1">
                       <span

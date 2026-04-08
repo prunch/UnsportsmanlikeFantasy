@@ -39,6 +39,38 @@ export interface SyncResult {
   skipped: number;
 }
 
+export interface DefenseSyncResult {
+  defensesSynced: number;
+}
+
+// ── Team Defense type defs ──────────────────────────────────────────────────
+
+interface Tank01TeamDefenseStats {
+  sacks?: string;
+  defensiveInterceptions?: string;
+  fumblesRecovered?: string;
+  defTD?: string;
+  totalTackles?: string;
+  passingYardsAllowed?: string;
+  rushingYardsAllowed?: string;
+  passingTDAllowed?: string;
+  rushingTDAllowed?: string;
+}
+
+interface Tank01Team {
+  teamAbv: string;
+  teamName?: string;
+  espnLogo1?: string;
+  teamStats?: {
+    Defense?: Tank01TeamDefenseStats;
+  };
+}
+
+interface Tank01TeamsResponse {
+  statusCode: number;
+  body: Tank01Team[] | Record<string, Tank01Team>;
+}
+
 // Valid positions accepted by the DB CHECK constraint
 const VALID_POSITIONS = new Set(['QB', 'RB', 'WR', 'TE', 'K', 'DEF']);
 
@@ -120,6 +152,90 @@ export function mapPlayer(p: Tank01Player): PlayerRow | null {
     status,
     updated_at: new Date().toISOString(),
   };
+}
+
+type DefenseRow = {
+  id: string;
+  name: string;
+  position: string;
+  nfl_team: string;
+  headshot_url: string | null;
+  status: string;
+  updated_at: string;
+};
+
+/**
+ * Fetches NFL teams from Tank01 and maps them to defense rows.
+ */
+export async function fetchAllTeams(): Promise<Tank01Team[]> {
+  const url = `${TANK01_BASE_URL}/getNFLTeams?teamStats=true`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'x-rapidapi-host': TANK01_HOST,
+      'x-rapidapi-key': TANK01_API_KEY,
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Tank01 HTTP ${res.status}: ${res.statusText}`);
+  }
+
+  const json = (await res.json()) as Tank01TeamsResponse;
+
+  if (json.statusCode !== 200) {
+    throw new Error(`Tank01 returned statusCode ${json.statusCode}`);
+  }
+
+  const body = json.body;
+  if (Array.isArray(body)) return body;
+  return Object.values(body) as Tank01Team[];
+}
+
+export function mapTeamDefense(team: Tank01Team): DefenseRow | null {
+  const abv = team.teamAbv?.trim();
+  if (!abv) return null;
+
+  const name = team.teamName?.trim();
+  if (!name) return null;
+
+  return {
+    id: `${abv}-DEF`,
+    name: `${name} Defense`,
+    position: 'DEF',
+    nfl_team: abv,
+    headshot_url: team.espnLogo1 || null,
+    status: 'active',
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Runs the defense sync — upserts all 32 NFL team defenses into the players table.
+ */
+export async function runDefenseSync(): Promise<DefenseSyncResult> {
+  const teams = await fetchAllTeams();
+
+  const mapped: DefenseRow[] = [];
+  for (const team of teams) {
+    const row = mapTeamDefense(team);
+    if (row) mapped.push(row);
+  }
+
+  if (mapped.length === 0) {
+    return { defensesSynced: 0 };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabaseAdmin as any)
+    .from('players')
+    .upsert(mapped, { onConflict: 'id', ignoreDuplicates: false });
+
+  if (error) {
+    throw new Error(`Defense upsert error: ${error.message}`);
+  }
+
+  return { defensesSynced: mapped.length };
 }
 
 /**

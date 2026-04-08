@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAdmin, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../utils/supabase';
 import { AppError } from '../middleware/errorHandler';
-import { runPlayerSync } from '../utils/syncPlayersUtil';
+import { runPlayerSync, runDefenseSync } from '../utils/syncPlayersUtil';
 
 const router = Router();
 
@@ -216,13 +216,17 @@ router.post('/sync-players', async (req: AuthRequest, res: Response, next: NextF
 
     lastSyncTime = now;
 
-    const { playersSynced, skipped } = await runPlayerSync();
+    const [{ playersSynced, skipped }, { defensesSynced }] = await Promise.all([
+      runPlayerSync(),
+      runDefenseSync(),
+    ]);
 
     res.json({
       success: true,
       playersSynced,
+      defensesSynced,
       skipped,
-      message: `Players synced successfully`,
+      message: `Players and defenses synced successfully`,
       syncedAt: new Date().toISOString(),
     });
   } catch (err) {
