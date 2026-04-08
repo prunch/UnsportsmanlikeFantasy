@@ -149,6 +149,23 @@ router.get('/available', requireAuth, async (req: AuthRequest, res: Response, ne
 });
 
 // ============================================================
+// GET /api/players/count
+// Returns total player count in the database
+// ============================================================
+router.get('/count', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { count, error } = await supabaseAdmin
+      .from('players')
+      .select('*', { count: 'exact', head: true });
+
+    if (error) throw new AppError('Failed to count players', 500);
+    res.json({ count: count ?? 0 });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
 // GET /api/players/:id
 // Get a single player by ID
 // ============================================================

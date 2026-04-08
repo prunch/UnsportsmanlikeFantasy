@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../utils/supabase';
 import { AppError } from '../middleware/errorHandler';
+import { runPlayerSync } from '../utils/syncPlayersUtil';
 
 const router = Router();
 
@@ -193,6 +194,40 @@ router.put('/config/:key', async (req: AuthRequest, res: Response, next: NextFun
     if (error) throw new AppError('Failed to save config', 500);
     res.json({ success: true, key });
   } catch (err) {
+    next(err);
+  }
+});
+
+// --- PLAYER SYNC ---
+
+// Track last sync time and rate-limit to once per minute
+let lastSyncTime: number | null = null;
+const SYNC_COOLDOWN_MS = 60 * 1000; // 1 minute
+
+// POST /api/admin/sync-players
+router.post('/sync-players', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    // Rate limit: once per minute
+    const now = Date.now();
+    if (lastSyncTime && now - lastSyncTime < SYNC_COOLDOWN_MS) {
+      const secondsLeft = Math.ceil((SYNC_COOLDOWN_MS - (now - lastSyncTime)) / 1000);
+      throw new AppError(`Sync is rate-limited. Try again in ${secondsLeft} seconds.`, 429);
+    }
+
+    lastSyncTime = now;
+
+    const { playersSynced, skipped } = await runPlayerSync();
+
+    res.json({
+      success: true,
+      playersSynced,
+      skipped,
+      message: `Players synced successfully`,
+      syncedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    // Reset rate limit on error so admin can retry
+    lastSyncTime = null;
     next(err);
   }
 });
