@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../utils/supabase';
 import { AppError } from '../middleware/errorHandler';
+import { resolveAutoPick } from '../services/autoPick';
 
 const router = Router();
 
@@ -876,6 +877,162 @@ router.post('/:id/roster/drop', requireAuth, async (req: AuthRequest, res: Respo
     });
 
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// AUTO-PICK
+// ============================================================
+
+/**
+ * POST /api/leagues/:id/draft/auto-pick
+ *
+ * Triggered by the frontend when the draft timer expires (or when the user
+ * has enabled "always auto-pick").  The server uses the current team's
+ * saved draft-order preferences to select the best available player and
+ * records the pick exactly like a manual pick would be recorded.
+ *
+ * The caller must be authenticated; the endpoint verifies it is actually
+ * the correct team's turn before acting.
+ */
+router.post('/:id/draft/auto-pick', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    // Load league
+    const { data: league, error: leagueError } = await supabaseAdmin
+      .from('leagues')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (leagueError || !league) throw new AppError('League not found', 404);
+    if (league.status !== 'draft') throw new AppError('League is not in draft mode', 400);
+
+    // Load teams sorted by draft position
+    const { data: teams } = await supabaseAdmin
+      .from('teams')
+      .select('id, draft_position, user_id')
+      .eq('league_id', id)
+      .order('draft_position');
+
+    const teamCount = (teams || []).length;
+    if (teamCount === 0) throw new AppError('No teams in league', 400);
+
+    const currentPickNumber = league.draft_current_pick || 0;
+    const nextPickIndex = snakeDraftTeamIndex(currentPickNumber + 1, teamCount);
+    const sortedTeams = [...(teams || [])].sort(
+      (a: { draft_position: number }, b: { draft_position: number }) => a.draft_position - b.draft_position
+    );
+    const pickingTeam = sortedTeams[nextPickIndex];
+
+    if (!pickingTeam) throw new AppError('Could not determine picking team', 500);
+
+    // Only the user whose turn it is (or any authenticated user on behalf of the timer)
+    // can trigger auto-pick. We allow any league member to call this so the frontend
+    // timer on any connected client can fire it, but we never allow skipping someone
+    // else's turn to pick for them maliciously — the pick is always for the CURRENT team.
+    await requireMembership(id, req.user!.id);
+
+    // Resolve best available player using draft preferences
+    const autoPick = await resolveAutoPick(id, (pickingTeam as { id: string }).id);
+    if (!autoPick) throw new AppError('No available players to auto-pick', 400);
+
+    // Check player is still available (race-condition guard)
+    const { data: alreadyPicked } = await supabaseAdmin
+      .from('draft_picks')
+      .select('id')
+      .eq('league_id', id)
+      .eq('player_id', autoPick.playerId)
+      .single();
+
+    if (alreadyPicked) throw new AppError('Auto-pick target already drafted, please retry', 409);
+
+    // Fetch full player record for slot assignment
+    const { data: player } = await supabaseAdmin
+      .from('players')
+      .select('id, position')
+      .eq('id', autoPick.playerId)
+      .single();
+
+    if (!player) throw new AppError('Player not found', 404);
+
+    const round = Math.ceil((currentPickNumber + 1) / teamCount);
+    const pickInRound = ((currentPickNumber) % teamCount) + 1;
+
+    // Insert draft pick (marked as auto)
+    const { data: pick, error: pickError } = await supabaseAdmin
+      .from('draft_picks')
+      .insert({
+        league_id: id,
+        team_id: (pickingTeam as { id: string }).id,
+        player_id: autoPick.playerId,
+        round,
+        pick: currentPickNumber + 1,
+        is_auto: true
+      })
+      .select()
+      .single();
+
+    if (pickError) throw new AppError(`Failed to record auto-pick: ${pickError.message}`, 500);
+
+    // Place player on roster
+    const { data: existingRoster } = await supabaseAdmin
+      .from('rosters')
+      .select('slot')
+      .eq('team_id', (pickingTeam as { id: string }).id)
+      .eq('week', 0);
+
+    const usedSlots = new Set((existingRoster || []).map((r: { slot: string }) => r.slot));
+    const pos = (player as { position: string }).position;
+
+    const slotPriority: string[] = [];
+    if (pos === 'QB') slotPriority.push('QB');
+    if (pos === 'RB') slotPriority.push('RB', 'RB2', 'FLEX');
+    if (pos === 'WR') slotPriority.push('WR', 'WR2', 'FLEX');
+    if (pos === 'TE') slotPriority.push('TE', 'FLEX');
+    if (pos === 'K') slotPriority.push('K');
+    if (pos === 'DEF') slotPriority.push('DEF');
+    slotPriority.push('BN1', 'BN2', 'BN3', 'BN4', 'BN5', 'BN6');
+
+    const targetSlot = slotPriority.find(s => !usedSlots.has(s)) || 'BN6';
+
+    await supabaseAdmin.from('rosters').insert({
+      team_id: (pickingTeam as { id: string }).id,
+      player_id: autoPick.playerId,
+      slot: targetSlot,
+      week: 0,
+      acquired_via: 'draft'
+    });
+
+    // Advance pick counter
+    const newPickNumber = currentPickNumber + 1;
+    const totalPicks = teamCount * 15;
+
+    if (newPickNumber >= totalPicks) {
+      await supabaseAdmin
+        .from('leagues')
+        .update({ draft_current_pick: newPickNumber, status: 'active', current_week: 1 })
+        .eq('id', id);
+    } else {
+      await supabaseAdmin
+        .from('leagues')
+        .update({ draft_current_pick: newPickNumber })
+        .eq('id', id);
+    }
+
+    res.status(201).json({
+      pick,
+      round,
+      pickInRound,
+      slot: targetSlot,
+      autoPickReason: autoPick.reason,
+      playerName: autoPick.playerName,
+      position: autoPick.position,
+      draftComplete: newPickNumber >= totalPicks
+    });
   } catch (err) {
     next(err);
   }

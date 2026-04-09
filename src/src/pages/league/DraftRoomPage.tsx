@@ -3,7 +3,8 @@ import { useAuthStore } from '../../stores/authStore';
 import { apiGet, apiPost } from '../../utils/api';
 import toast from 'react-hot-toast';
 import type { League } from '../LeaguePage';
-import { Search, Clock, Check } from 'lucide-react';
+import { Search, Clock, Check, Settings2 } from 'lucide-react';
+import DraftOrderModal from '../../components/DraftOrderModal';
 
 interface Player {
   id: string;
@@ -63,6 +64,9 @@ export default function DraftRoomPage({ league, onPickMade }: { league: League; 
   const [loading, setLoading] = useState(true);
   const [picking, setPicking] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
+  const [showDraftOrder, setShowDraftOrder] = useState(false);
+  const [autoPickEnabled, setAutoPickEnabled] = useState(false);
+  const autoPickFiredRef = useRef(false); // prevent double-firing per pick slot
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -114,11 +118,13 @@ export default function DraftRoomPage({ league, onPickMade }: { league: League; 
     loadAvailablePlayers();
   }, [search, posFilter, draftState?.currentPickNumber]);
 
-  // Countdown timer
+  // Countdown timer — resets on each new pick and fires auto-pick when it hits 0
   useEffect(() => {
     if (!draftState) return;
+    autoPickFiredRef.current = false;
     setTimeLeft(draftState.league.draft_timer_seconds);
     if (timerRef.current) clearInterval(timerRef.current);
+
     timerRef.current = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 1) {
@@ -131,12 +137,27 @@ export default function DraftRoomPage({ league, onPickMade }: { league: League; 
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [draftState?.currentPickNumber]);
 
+  // When timer hits 0, fire auto-pick so the draft never stalls
+  useEffect(() => {
+    if (timeLeft === 0 && draftState?.league.status === 'draft') {
+      handleAutoPick();
+    }
+  }, [timeLeft]);
+
+  // If user has "always auto-pick" on and it's any team's turn, fire immediately
+  useEffect(() => {
+    if (!draftState || !autoPickEnabled) return;
+    if (draftState.league.status !== 'draft') return;
+    handleAutoPick();
+  }, [draftState?.currentPickNumber, autoPickEnabled]);
+
   async function handlePick(playerId: string) {
     if (!token || picking) return;
     setPicking(true);
     try {
       await apiPost(`/leagues/${league.id}/draft/pick`, { playerId }, token);
       toast.success('Pick made!');
+      autoPickFiredRef.current = false;
       await loadDraftState();
       await loadAvailablePlayers();
       onPickMade();
@@ -146,6 +167,33 @@ export default function DraftRoomPage({ league, onPickMade }: { league: League; 
       setPicking(false);
     }
   }
+
+  /**
+   * Trigger the server-side auto-pick for the current team on the clock.
+   * Called when the timer hits 0 OR when the user has "always auto-pick" on.
+   */
+  const handleAutoPick = useCallback(async () => {
+    if (!token || picking || autoPickFiredRef.current) return;
+    autoPickFiredRef.current = true;
+    setPicking(true);
+    try {
+      const result = await apiPost<{ playerName: string; position: string; draftComplete: boolean }>(
+        `/leagues/${league.id}/draft/auto-pick`,
+        {},
+        token
+      );
+      toast(`🤖 Auto-picked ${result.playerName} (${result.position})`, { icon: '⚡' });
+      await loadDraftState();
+      await loadAvailablePlayers();
+      onPickMade();
+    } catch (err) {
+      // If it's a "not your turn" or race-condition error just reload state
+      await loadDraftState();
+    } finally {
+      setPicking(false);
+      autoPickFiredRef.current = false;
+    }
+  }, [token, league.id, picking]);
 
   if (loading || !draftState) {
     return (
@@ -161,6 +209,15 @@ export default function DraftRoomPage({ league, onPickMade }: { league: League; 
   const timerColor = timeLeft > 30 ? 'bg-green-500' : timeLeft > 10 ? 'bg-yellow-500' : 'bg-red-500';
 
   return (
+    <>
+    {showDraftOrder && token && (
+      <DraftOrderModal
+        leagueId={league.id}
+        token={token}
+        onClose={() => setShowDraftOrder(false)}
+        onSaved={(prefs) => setAutoPickEnabled(prefs.autoPickEnabled)}
+      />
+    )}
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Left: Player Pool */}
       <div className="lg:col-span-2 space-y-4">
@@ -177,11 +234,21 @@ export default function DraftRoomPage({ league, onPickMade }: { league: League; 
                 {isMyTurn ? '⭐ Your turn to pick!' : `On the clock: ${draftState.currentTeam?.team_name || '—'}`}
               </p>
             </div>
-            <div className="flex items-center gap-2 text-white">
-              <Clock size={18} />
-              <span className={`text-2xl font-mono font-bold ${timeLeft <= 10 ? 'text-red-400' : ''}`}>
-                {timeLeft}s
-              </span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowDraftOrder(true)}
+                className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg px-2.5 py-1.5 transition-colors"
+                title="Set draft preferences"
+              >
+                <Settings2 size={14} />
+                Preferences
+              </button>
+              <div className="flex items-center gap-2 text-white">
+                <Clock size={18} />
+                <span className={`text-2xl font-mono font-bold ${timeLeft <= 10 ? 'text-red-400' : ''}`}>
+                  {timeLeft}s
+                </span>
+              </div>
             </div>
           </div>
           {/* Timer bar */}
@@ -339,5 +406,6 @@ export default function DraftRoomPage({ league, onPickMade }: { league: League; 
         </div>
       </div>
     </div>
+    </>
   );
 }

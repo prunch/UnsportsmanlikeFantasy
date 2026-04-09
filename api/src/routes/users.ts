@@ -100,4 +100,105 @@ router.get('/me/leagues', requireAuth, async (req: AuthRequest, res: Response, n
   }
 });
 
+// ============================================================
+// DRAFT ORDER PREFERENCES
+// ============================================================
+
+const VALID_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'] as const;
+
+const draftOrderSchema = z.object({
+  draftOrder: z
+    .array(z.enum(VALID_POSITIONS))
+    .length(6, 'Must include all 6 positions exactly once')
+    .refine(
+      (arr) => new Set(arr).size === arr.length,
+      'Each position must appear exactly once'
+    ),
+  autoPickEnabled: z.boolean().optional()
+});
+
+/**
+ * GET /api/users/me/draft-order/:leagueId
+ * Returns the user's draft order preferences for a specific league team.
+ */
+router.get(
+  '/me/draft-order/:leagueId',
+  requireAuth,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { leagueId } = req.params;
+
+      const { data: team, error } = await supabaseAdmin
+        .from('teams')
+        .select('id, draft_order, auto_pick_enabled')
+        .eq('league_id', leagueId)
+        .eq('user_id', req.user!.id)
+        .single();
+
+      if (error || !team) throw new AppError('Team not found in this league', 404);
+
+      res.json({
+        teamId: team.id,
+        draftOrder: team.draft_order ?? ['RB', 'WR', 'QB', 'TE', 'K', 'DEF'],
+        autoPickEnabled: team.auto_pick_enabled ?? false
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * PUT /api/users/me/draft-order/:leagueId
+ * Saves the user's draft order preferences for a specific league team.
+ *
+ * Body: { draftOrder: string[], autoPickEnabled?: boolean }
+ */
+router.put(
+  '/me/draft-order/:leagueId',
+  requireAuth,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { leagueId } = req.params;
+      const body = draftOrderSchema.parse(req.body);
+
+      // Verify the user has a team in this league
+      const { data: existingTeam, error: lookupErr } = await supabaseAdmin
+        .from('teams')
+        .select('id')
+        .eq('league_id', leagueId)
+        .eq('user_id', req.user!.id)
+        .single();
+
+      if (lookupErr || !existingTeam) {
+        throw new AppError('Team not found in this league', 404);
+      }
+
+      const updates: Record<string, unknown> = {
+        draft_order: body.draftOrder
+      };
+      if (body.autoPickEnabled !== undefined) {
+        updates.auto_pick_enabled = body.autoPickEnabled;
+      }
+
+      const { data: updated, error: updateErr } = await supabaseAdmin
+        .from('teams')
+        .update(updates)
+        .eq('id', existingTeam.id)
+        .select('id, draft_order, auto_pick_enabled')
+        .single();
+
+      if (updateErr || !updated) throw new AppError('Failed to save draft order', 500);
+
+      res.json({
+        teamId: updated.id,
+        draftOrder: updated.draft_order,
+        autoPickEnabled: updated.auto_pick_enabled
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 export default router;
