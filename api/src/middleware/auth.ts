@@ -2,15 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AppError } from './errorHandler';
 
-export interface AuthRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-    role: string;
-  };
-}
+// AuthRequest is an alias for Request — req.user is declared globally in types.ts
+// via the Express namespace augmentation, so no local interface extension is needed.
+export type AuthRequest = Request;
 
-export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) {
     return next(new AppError('Authentication required', 401));
@@ -26,7 +22,7 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
   }
 }
 
-export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   requireAuth(req, res, (err) => {
     if (err) return next(err);
     if (req.user?.role !== 'admin') {

@@ -63,8 +63,9 @@ export interface ApiConfig {
 }
 
 // JWT payload attached to authenticated requests
+// Note: tokens are signed with { id, email, role } — NOT using 'sub'
 export interface JwtPayload {
-  sub: string; // Supabase user ID
+  id: string;    // Supabase user ID (matches what signToken() embeds)
   email: string;
   role: 'user' | 'admin';
   iat: number;
@@ -72,10 +73,15 @@ export interface JwtPayload {
 }
 
 // Express request extension — adds the decoded user to req.user
+// Shape must match the payload set by requireAuth() in middleware/auth.ts
 declare global {
   namespace Express {
     interface Request {
-      user?: JwtPayload;
+      user?: {
+        id: string;
+        email: string;
+        role: string;
+      };
     }
   }
 }
