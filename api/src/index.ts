@@ -18,7 +18,23 @@ import healthRouter from './routes/health';
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// Security middleware
+// ── Startup env check ──────────────────────────────────────────────────────────
+logger.info('[startup] Gridiron Cards API initialising', {
+  nodeEnv: process.env.NODE_ENV || 'development',
+  port: PORT,
+  supabaseUrl: process.env.SUPABASE_URL || '⚠ NOT SET',
+  hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+  hasAnonKey: !!process.env.SUPABASE_ANON_KEY,
+  hasJwtSecret: !!process.env.JWT_SECRET,
+  hasTank01Key: !!process.env.TANK01_API_KEY,
+  corsOrigin: process.env.CORS_ORIGIN || '*'
+});
+
+if (!process.env.SUPABASE_URL) logger.warn('[startup] ⚠  SUPABASE_URL is not set!');
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) logger.warn('[startup] ⚠  SUPABASE_SERVICE_ROLE_KEY is not set!');
+if (!process.env.JWT_SECRET) logger.warn('[startup] ⚠  JWT_SECRET is not set — using insecure dev-secret!');
+
+// ── Security middleware ────────────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
@@ -26,7 +42,7 @@ app.use(cors({
 }));
 app.use(compression());
 
-// Rate limiting
+// ── Rate limiting ──────────────────────────────────────────────────────────────
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
@@ -36,16 +52,16 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Logging
+// ── HTTP request logging ───────────────────────────────────────────────────────
 app.use(morgan('combined', {
-  stream: { write: (message) => logger.info(message.trim()) }
+  stream: { write: (message) => logger.http(message.trim()) }
 }));
 
-// Body parsing
+// ── Body parsing ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
+// ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
@@ -53,12 +69,12 @@ app.use('/api/leagues', leaguesRouter);
 app.use('/api/players', playersRouter);
 app.use('/api/admin', adminRouter);
 
-// Error handling
+// ── Error handling ─────────────────────────────────────────────────────────────
 app.use(errorHandler);
 
 app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🏈 Gridiron Cards API running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`[startup] All routes mounted — ready to serve`);
 });
 
 export default app;
