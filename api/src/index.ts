@@ -13,29 +13,17 @@ import usersRouter from './routes/users';
 import leaguesRouter from './routes/leagues';
 import adminRouter from './routes/admin';
 import cardsRouter from './routes/cards';
+import chatRouter from './routes/chat';
+import notificationsRouter from './routes/notifications';
+import scoreboardRouter from './routes/scoreboard';
+import commissionerRouter from './routes/commissioner';
 import healthRouter from './routes/health';
 import debugRouter from './routes/debug'; // DEBUG-ONLY: REMOVE FOR PROD
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// ── Startup env check ──────────────────────────────────────────────────────────
-logger.info('[startup] Gridiron Cards API initialising', {
-  nodeEnv: process.env.NODE_ENV || 'development',
-  port: PORT,
-  supabaseUrl: process.env.SUPABASE_URL || '⚠ NOT SET',
-  hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-  hasAnonKey: !!process.env.SUPABASE_ANON_KEY,
-  hasJwtSecret: !!process.env.JWT_SECRET,
-  hasTank01Key: !!process.env.TANK01_API_KEY,
-  corsOrigin: process.env.CORS_ORIGIN || '*'
-});
-
-if (!process.env.SUPABASE_URL) logger.warn('[startup] ⚠  SUPABASE_URL is not set!');
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY) logger.warn('[startup] ⚠  SUPABASE_SERVICE_ROLE_KEY is not set!');
-if (!process.env.JWT_SECRET) logger.warn('[startup] ⚠  JWT_SECRET is not set — using insecure dev-secret!');
-
-// ── Security middleware ────────────────────────────────────────────────────────
+// Security middleware
 app.use(helmet());
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
@@ -43,7 +31,7 @@ app.use(cors({
 }));
 app.use(compression());
 
-// ── Rate limiting ──────────────────────────────────────────────────────────────
+// Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
@@ -53,21 +41,25 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// ── HTTP request logging ───────────────────────────────────────────────────────
+// Logging
 app.use(morgan('combined', {
-  stream: { write: (message) => logger.http(message.trim()) }
+  stream: { write: (message) => logger.info(message.trim()) }
 }));
 
-// ── Body parsing ───────────────────────────────────────────────────────────────
+// Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// ── Routes ─────────────────────────────────────────────────────────────────────
+// Routes
 app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/leagues', leaguesRouter);
 app.use('/api', cardsRouter);
+app.use('/api/leagues', chatRouter);
+app.use('/api/leagues', scoreboardRouter);
+app.use('/api/leagues', commissionerRouter);
+app.use('/api/notifications', notificationsRouter);
 app.use('/api/admin', adminRouter);
 
 // DEBUG-ONLY: REMOVE FOR PROD
@@ -76,12 +68,12 @@ if (process.env.DEBUG_DRAFT === 'true') {
   logger.info('🐛 Debug draft routes enabled at /api/debug');
 }
 
-// ── Error handling ─────────────────────────────────────────────────────────────
+// Error handling
 app.use(errorHandler);
 
 app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🏈 Gridiron Cards API running on port ${PORT}`);
-  logger.info(`[startup] All routes mounted — ready to serve`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 export default app;

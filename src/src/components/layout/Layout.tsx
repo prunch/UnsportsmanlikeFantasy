@@ -1,11 +1,30 @@
 import { Outlet, Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
-import { LogOut, LayoutDashboard, Plus, Users, Settings } from 'lucide-react';
+import { LogOut, LayoutDashboard, Plus, Users, Settings, Bell } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { apiGet } from '../../utils/api';
 import toast from 'react-hot-toast';
 
 export default function Layout() {
-  const { user, logout } = useAuthStore();
+  const { user, logout, token } = useAuthStore();
   const navigate = useNavigate();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const loadUnreadCount = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await apiGet<{ count: number }>('/notifications/unread-count', token);
+      setUnreadCount(data.count);
+    } catch {
+      // silent
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadUnreadCount();
+    const interval = setInterval(loadUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, [loadUnreadCount]);
 
   function handleLogout() {
     logout();
@@ -33,6 +52,20 @@ export default function Layout() {
           <NavLink to="/dashboard" icon={<LayoutDashboard size={18} />}>My Leagues</NavLink>
           <NavLink to="/leagues/create" icon={<Plus size={18} />}>Create League</NavLink>
           <NavLink to="/leagues/join" icon={<Users size={18} />}>Join League</NavLink>
+          <Link
+            to="/notifications"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors text-sm font-medium"
+          >
+            <div className="relative">
+              <Bell size={18} />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-gridiron-gold rounded-full text-black text-[10px] font-bold flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </div>
+            Notifications
+          </Link>
           {user?.role === 'admin' && (
             <NavLink to="/admin" icon={<Settings size={18} />}>Admin Panel</NavLink>
           )}

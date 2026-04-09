@@ -21,38 +21,21 @@ export function errorHandler(
   _next: NextFunction
 ): void {
   if (err instanceof ZodError) {
-    const details = err.errors.map(e => ({ path: e.path.join('.'), message: e.message }));
-    logger.warn(`[errorHandler] Validation error — ${req.method} ${req.path}`, {
-      details,
-      body: req.body
+    res.status(400).json({
+      error: 'Validation error',
+      details: err.errors.map(e => ({ path: e.path.join('.'), message: e.message }))
     });
-    res.status(400).json({ error: 'Validation error', details });
     return;
   }
 
   if (err instanceof AppError) {
     if (err.statusCode >= 500) {
-      logger.error(`[errorHandler] AppError ${err.statusCode} — ${req.method} ${req.path}`, {
-        message: err.message,
-        stack: err.stack,
-        body: req.body,
-        params: req.params,
-        query: req.query
-      });
-    } else {
-      logger.warn(`[errorHandler] AppError ${err.statusCode} — ${req.method} ${req.path}: ${err.message}`);
+      logger.error(`[${req.method}] ${req.path} — ${err.message}`, { stack: err.stack });
     }
     res.status(err.statusCode).json({ error: err.message });
     return;
   }
 
-  // Unexpected / unhandled error
-  logger.error(`[errorHandler] UNHANDLED ERROR — ${req.method} ${req.path}`, {
-    message: err.message,
-    stack: err.stack,
-    body: req.body,
-    params: req.params,
-    query: req.query
-  });
+  logger.error(`[${req.method}] ${req.path} — Unhandled error: ${err.message}`, { stack: err.stack });
   res.status(500).json({ error: 'Internal server error' });
 }

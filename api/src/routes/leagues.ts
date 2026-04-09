@@ -4,7 +4,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../utils/supabase';
 import { AppError } from '../middleware/errorHandler';
-import { logger } from '../utils/logger';
 
 const router = Router();
 
@@ -50,21 +49,14 @@ function generateInviteCode(): string {
 
 /** Returns the team_id of the current user in a given league, or throws 403. */
 async function requireMembership(leagueId: string, userId: string): Promise<string> {
-  logger.debug('[leagues] requireMembership — checking', { leagueId, userId });
   const { data, error } = await supabaseAdmin
     .from('teams')
     .select('id')
     .eq('league_id', leagueId)
     .eq('user_id', userId)
     .single();
-
-  if (error || !data) {
-    logger.warn('[leagues] requireMembership — not a member', { leagueId, userId, dbError: error });
-    throw new AppError('Not a member of this league', 403);
-  }
-
-  logger.debug('[leagues] requireMembership — ok', { leagueId, userId, teamId: (data as { id: string }).id });
-  return (data as { id: string }).id;
+  if (error || !data) throw new AppError('Not a member of this league', 403);
+  return data.id;
 }
 
 /** Snake draft: given pick number (1-based) and team count, return team index (0-based). */
@@ -81,12 +73,9 @@ function snakeDraftTeamIndex(pickNumber: number, teamCount: number): number {
 // LEAGUE CRUD
 // ============================================================
 
-// ── GET /api/leagues — List leagues for current user ─────────────────────────
+// GET /api/leagues — List leagues for current user
 router.get('/', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  logger.info('[leagues] GET / — list user leagues', { userId: uid });
   try {
-    logger.debug('[leagues] GET / — querying teams JOIN leagues', { userId: uid });
     const { data, error } = await supabaseAdmin
       .from('teams')
       .select(`
@@ -95,38 +84,28 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response, next: NextF
           created_at
         )
       `)
-      .eq('user_id', uid);
+      .eq('user_id', req.user!.id);
 
-    if (error) {
-      logger.error('[leagues] GET / — DB error fetching leagues', { userId: uid, dbError: error });
-      throw new AppError('Failed to fetch leagues', 500);
-    }
-
-    const leagues = data?.map((d: { league: unknown }) => d.league).filter(Boolean) || [];
-    logger.info('[leagues] GET / — success', { userId: uid, count: leagues.length });
-    res.json(leagues);
+    if (error) throw new AppError('Failed to fetch leagues', 500);
+    res.json(data?.map((d: { league: unknown }) => d.league).filter(Boolean) || []);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET / — unexpected error', { userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues — Create league ────────────────────────────────────────
+// POST /api/leagues — Create league
 router.post('/', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  logger.info('[leagues] POST / — create league', { userId: uid, body: req.body });
   try {
     const body = createLeagueSchema.parse(req.body);
     const leagueId = uuidv4();
     const inviteCode = generateInviteCode();
 
-    logger.debug('[leagues] POST / — inserting league', { leagueId, name: body.name, userId: uid });
     const { data: league, error: leagueError } = await supabaseAdmin
       .from('leagues')
       .insert({
         id: leagueId,
         name: body.name,
-        commissioner_id: uid,
+        commissioner_id: req.user!.id,
         max_teams: body.maxTeams,
         draft_type: body.draftType,
         draft_timer_seconds: body.draftTimerSeconds,
@@ -139,51 +118,34 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response, next: Next
       .select()
       .single();
 
-    if (leagueError) {
-      logger.error('[leagues] POST / — failed to insert league', { userId: uid, dbError: leagueError });
-      throw new AppError(`Failed to create league: ${leagueError.message}`, 500);
-    }
+    if (leagueError) throw new AppError(`Failed to create league: ${leagueError.message}`, 500);
 
-    logger.debug('[leagues] POST / — league created, inserting commissioner team', {
-      leagueId,
-      userId: uid
-    });
-
+    // Create commissioner's team
     const { error: teamError } = await supabaseAdmin
       .from('teams')
       .insert({
         league_id: leagueId,
-        user_id: uid,
+        user_id: req.user!.id,
         team_name: `${req.user!.email}'s Team`
       });
 
     if (teamError) {
-      logger.error('[leagues] POST / — failed to create commissioner team, rolling back league', {
-        leagueId,
-        userId: uid,
-        dbError: teamError
-      });
       await supabaseAdmin.from('leagues').delete().eq('id', leagueId);
       throw new AppError('Failed to create team', 500);
     }
 
-    logger.info('[leagues] POST / — success', { leagueId, name: body.name, userId: uid, inviteCode });
     res.status(201).json(league);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST / — unexpected error', { userId: uid, error: err });
     next(err);
   }
 });
 
-// ── GET /api/leagues/:id — Get league detail ─────────────────────────────────
+// GET /api/leagues/:id — Get league detail
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] GET /:id', { userId: uid, leagueId: id });
   try {
-    await requireMembership(id, uid);
+    const { id } = req.params;
+    await requireMembership(id, req.user!.id);
 
-    logger.debug('[leagues] GET /:id — fetching league with teams', { leagueId: id });
     const { data: league, error } = await supabaseAdmin
       .from('leagues')
       .select(`
@@ -197,111 +159,75 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response, next: Ne
       .eq('id', id)
       .single();
 
-    if (error || !league) {
-      logger.warn('[leagues] GET /:id — league not found', { leagueId: id, dbError: error });
-      throw new AppError('League not found', 404);
-    }
-
-    logger.info('[leagues] GET /:id — success', { leagueId: id, userId: uid });
+    if (error || !league) throw new AppError('League not found', 404);
     res.json(league);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET /:id — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues/join — Join by invite code ─────────────────────────────
+// POST /api/leagues/join — Join by invite code
 router.post('/join', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  logger.info('[leagues] POST /join', { userId: uid, body: req.body });
   try {
     const body = joinLeagueSchema.parse(req.body);
-    const code = body.inviteCode.toUpperCase();
 
-    logger.debug('[leagues] POST /join — looking up invite code', { inviteCode: code });
     const { data: league, error: leagueError } = await supabaseAdmin
       .from('leagues')
       .select('*')
-      .eq('invite_code', code)
+      .eq('invite_code', body.inviteCode.toUpperCase())
       .single();
 
-    if (leagueError || !league) {
-      logger.warn('[leagues] POST /join — invalid invite code', { inviteCode: code, dbError: leagueError });
-      throw new AppError('Invalid invite code', 404);
-    }
-
-    if (league.status !== 'setup') {
-      logger.warn('[leagues] POST /join — league not in setup', { leagueId: league.id, status: league.status });
-      throw new AppError('League is not accepting new members', 400);
-    }
+    if (leagueError || !league) throw new AppError('Invalid invite code', 404);
+    if (league.status !== 'setup') throw new AppError('League is not accepting new members', 400);
 
     const { count } = await supabaseAdmin
       .from('teams')
       .select('*', { count: 'exact', head: true })
       .eq('league_id', league.id);
 
-    logger.debug('[leagues] POST /join — team count', { leagueId: league.id, count, max: league.max_teams });
     if ((count || 0) >= league.max_teams) throw new AppError('League is full', 400);
 
     const { data: existing } = await supabaseAdmin
       .from('teams')
       .select('id')
       .eq('league_id', league.id)
-      .eq('user_id', uid)
+      .eq('user_id', req.user!.id)
       .single();
 
-    if (existing) {
-      logger.warn('[leagues] POST /join — user already in league', { leagueId: league.id, userId: uid });
-      throw new AppError('Already a member of this league', 409);
-    }
+    if (existing) throw new AppError('Already a member of this league', 409);
 
-    logger.debug('[leagues] POST /join — inserting team', { leagueId: league.id, userId: uid });
     const { data: team, error: teamError } = await supabaseAdmin
       .from('teams')
-      .insert({ league_id: league.id, user_id: uid, team_name: body.teamName })
+      .insert({
+        league_id: league.id,
+        user_id: req.user!.id,
+        team_name: body.teamName
+      })
       .select()
       .single();
 
-    if (teamError) {
-      logger.error('[leagues] POST /join — failed to insert team', { leagueId: league.id, userId: uid, dbError: teamError });
-      throw new AppError('Failed to join league', 500);
-    }
-
-    logger.info('[leagues] POST /join — success', { leagueId: league.id, userId: uid, teamName: body.teamName });
+    if (teamError) throw new AppError('Failed to join league', 500);
     res.status(201).json({ league, team });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST /join — unexpected error', { userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues/:id/join — Alternate join by league ID ─────────────────
+// POST /api/leagues/:id/join — Alternate join by league ID (still needs invite code)
 router.post('/:id/join', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] POST /:id/join', { userId: uid, leagueId: id, body: req.body });
   try {
+    const { id } = req.params;
     const body = joinLeagueSchema.parse(req.body);
 
-    logger.debug('[leagues] POST /:id/join — fetching league', { leagueId: id });
     const { data: league, error: leagueError } = await supabaseAdmin
       .from('leagues')
       .select('*')
       .eq('id', id)
       .single();
 
-    if (leagueError || !league) {
-      logger.warn('[leagues] POST /:id/join — league not found', { leagueId: id, dbError: leagueError });
-      throw new AppError('League not found', 404);
-    }
-    if (league.invite_code !== body.inviteCode.toUpperCase()) {
-      logger.warn('[leagues] POST /:id/join — wrong invite code', { leagueId: id, userId: uid });
-      throw new AppError('Invalid invite code', 403);
-    }
-    if (league.status !== 'setup') {
-      logger.warn('[leagues] POST /:id/join — not in setup', { leagueId: id, status: league.status });
-      throw new AppError('League is not accepting new members', 400);
-    }
+    if (leagueError || !league) throw new AppError('League not found', 404);
+    if (league.invite_code !== body.inviteCode.toUpperCase()) throw new AppError('Invalid invite code', 403);
+    if (league.status !== 'setup') throw new AppError('League is not accepting new members', 400);
 
     const { count } = await supabaseAdmin
       .from('teams')
@@ -314,27 +240,24 @@ router.post('/:id/join', requireAuth, async (req: AuthRequest, res: Response, ne
       .from('teams')
       .select('id')
       .eq('league_id', id)
-      .eq('user_id', uid)
+      .eq('user_id', req.user!.id)
       .single();
 
     if (existing) throw new AppError('Already a member of this league', 409);
 
-    logger.debug('[leagues] POST /:id/join — inserting team', { leagueId: id, userId: uid });
     const { data: team, error: teamError } = await supabaseAdmin
       .from('teams')
-      .insert({ league_id: id, user_id: uid, team_name: body.teamName })
+      .insert({
+        league_id: id,
+        user_id: req.user!.id,
+        team_name: body.teamName
+      })
       .select()
       .single();
 
-    if (teamError) {
-      logger.error('[leagues] POST /:id/join — team insert failed', { leagueId: id, userId: uid, dbError: teamError });
-      throw new AppError('Failed to join league', 500);
-    }
-
-    logger.info('[leagues] POST /:id/join — success', { leagueId: id, userId: uid });
+    if (teamError) throw new AppError('Failed to join league', 500);
     res.status(201).json({ league, team });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST /:id/join — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
@@ -343,27 +266,20 @@ router.post('/:id/join', requireAuth, async (req: AuthRequest, res: Response, ne
 // ROSTERS
 // ============================================================
 
-// ── GET /api/leagues/:id/rosters — All rosters in the league ─────────────────
+// GET /api/leagues/:id/rosters — All rosters in the league
 router.get('/:id/rosters', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] GET /:id/rosters', { userId: uid, leagueId: id });
   try {
-    await requireMembership(id, uid);
+    const { id } = req.params;
+    await requireMembership(id, req.user!.id);
 
-    logger.debug('[leagues] GET /:id/rosters — fetching teams', { leagueId: id });
     const { data: teams, error: teamsError } = await supabaseAdmin
       .from('teams')
       .select('id, team_name, user:users(id, display_name)')
       .eq('league_id', id);
 
-    if (teamsError) {
-      logger.error('[leagues] GET /:id/rosters — teams DB error', { leagueId: id, dbError: teamsError });
-      throw new AppError('Failed to fetch teams', 500);
-    }
+    if (teamsError) throw new AppError('Failed to fetch teams', 500);
 
     const teamIds = (teams || []).map((t: { id: string }) => t.id);
-    logger.debug('[leagues] GET /:id/rosters — fetching rosters', { leagueId: id, teamCount: teamIds.length });
 
     const { data: rosters, error: rostersError } = await supabaseAdmin
       .from('rosters')
@@ -374,10 +290,7 @@ router.get('/:id/rosters', requireAuth, async (req: AuthRequest, res: Response, 
       .in('team_id', teamIds)
       .eq('week', 0);
 
-    if (rostersError) {
-      logger.error('[leagues] GET /:id/rosters — rosters DB error', { leagueId: id, dbError: rostersError });
-      throw new AppError('Failed to fetch rosters', 500);
-    }
+    if (rostersError) throw new AppError('Failed to fetch rosters', 500);
 
     // Group by team
     const rostersByTeam: Record<string, typeof rosters> = {};
@@ -392,23 +305,18 @@ router.get('/:id/rosters', requireAuth, async (req: AuthRequest, res: Response, 
       roster: rostersByTeam[team.id] || []
     }));
 
-    logger.info('[leagues] GET /:id/rosters — success', { leagueId: id, teamCount: result.length });
     res.json(result);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET /:id/rosters — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── GET /api/leagues/:id/roster/mine ─────────────────────────────────────────
+// GET /api/leagues/:id/roster/mine — Current user's roster
 router.get('/:id/roster/mine', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] GET /:id/roster/mine', { userId: uid, leagueId: id });
   try {
-    const teamId = await requireMembership(id, uid);
+    const { id } = req.params;
+    const teamId = await requireMembership(id, req.user!.id);
 
-    logger.debug('[leagues] GET /:id/roster/mine — fetching roster', { teamId, leagueId: id });
     const { data, error } = await supabaseAdmin
       .from('rosters')
       .select(`
@@ -419,29 +327,21 @@ router.get('/:id/roster/mine', requireAuth, async (req: AuthRequest, res: Respon
       .eq('week', 0)
       .order('slot');
 
-    if (error) {
-      logger.error('[leagues] GET /:id/roster/mine — DB error', { teamId, dbError: error });
-      throw new AppError('Failed to fetch roster', 500);
-    }
-
-    logger.info('[leagues] GET /:id/roster/mine — success', { teamId, slots: data?.length });
+    if (error) throw new AppError('Failed to fetch roster', 500);
     res.json(data || []);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET /:id/roster/mine — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues/:id/roster — Move player to a different slot ────────────
+// POST /api/leagues/:id/roster — Move player to a different slot
 router.post('/:id/roster', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] POST /:id/roster — slot move', { userId: uid, leagueId: id, body: req.body });
   try {
-    const teamId = await requireMembership(id, uid);
+    const { id } = req.params;
+    const teamId = await requireMembership(id, req.user!.id);
     const body = rosterUpdateSchema.parse(req.body);
 
-    logger.debug('[leagues] POST /:id/roster — checking player on team', { teamId, playerId: body.playerId });
+    // Check player is on team
     const { data: currentEntry, error: fetchError } = await supabaseAdmin
       .from('rosters')
       .select('id, slot')
@@ -450,12 +350,9 @@ router.post('/:id/roster', requireAuth, async (req: AuthRequest, res: Response, 
       .eq('week', 0)
       .single();
 
-    if (fetchError || !currentEntry) {
-      logger.warn('[leagues] POST /:id/roster — player not on roster', { teamId, playerId: body.playerId, dbError: fetchError });
-      throw new AppError('Player not on your roster', 404);
-    }
+    if (fetchError || !currentEntry) throw new AppError('Player not on your roster', 404);
 
-    logger.debug('[leagues] POST /:id/roster — checking target slot occupant', { teamId, targetSlot: body.slot });
+    // Check if target slot is occupied
     const { data: occupant } = await supabaseAdmin
       .from('rosters')
       .select('id, player_id')
@@ -465,26 +362,21 @@ router.post('/:id/roster', requireAuth, async (req: AuthRequest, res: Response, 
       .single();
 
     if (occupant) {
-      logger.debug('[leagues] POST /:id/roster — swapping slots', {
-        teamId,
-        fromSlot: (currentEntry as { slot: string }).slot,
-        toSlot: body.slot
-      });
+      // Swap slots
       await supabaseAdmin
         .from('rosters')
-        .update({ slot: (currentEntry as { slot: string }).slot })
+        .update({ slot: currentEntry.slot })
         .eq('id', (occupant as { id: string }).id);
     }
 
+    // Move player to target slot
     await supabaseAdmin
       .from('rosters')
       .update({ slot: body.slot })
       .eq('id', (currentEntry as { id: string }).id);
 
-    logger.info('[leagues] POST /:id/roster — success', { teamId, playerId: body.playerId, newSlot: body.slot });
     res.json({ success: true, message: `Moved player to ${body.slot}` });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST /:id/roster — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
@@ -493,25 +385,19 @@ router.post('/:id/roster', requireAuth, async (req: AuthRequest, res: Response, 
 // DRAFT
 // ============================================================
 
-// ── GET /api/leagues/:id/draft — Get draft state ──────────────────────────────
+// GET /api/leagues/:id/draft — Get draft state
 router.get('/:id/draft', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] GET /:id/draft', { userId: uid, leagueId: id });
   try {
-    await requireMembership(id, uid);
+    const { id } = req.params;
+    await requireMembership(id, req.user!.id);
 
-    logger.debug('[leagues] GET /:id/draft — fetching league state', { leagueId: id });
     const { data: league, error: leagueError } = await supabaseAdmin
       .from('leagues')
       .select('id, name, status, max_teams, draft_type, draft_timer_seconds, draft_current_pick, draft_started_at')
       .eq('id', id)
       .single();
 
-    if (leagueError || !league) {
-      logger.warn('[leagues] GET /:id/draft — league not found', { leagueId: id, dbError: leagueError });
-      throw new AppError('League not found', 404);
-    }
+    if (leagueError || !league) throw new AppError('League not found', 404);
 
     const { data: teams, error: teamsError } = await supabaseAdmin
       .from('teams')
@@ -519,10 +405,7 @@ router.get('/:id/draft', requireAuth, async (req: AuthRequest, res: Response, ne
       .eq('league_id', id)
       .order('draft_position', { ascending: true });
 
-    if (teamsError) {
-      logger.error('[leagues] GET /:id/draft — teams DB error', { leagueId: id, dbError: teamsError });
-      throw new AppError('Failed to fetch teams', 500);
-    }
+    if (teamsError) throw new AppError('Failed to fetch teams', 500);
 
     const { data: picks, error: picksError } = await supabaseAdmin
       .from('draft_picks')
@@ -534,10 +417,7 @@ router.get('/:id/draft', requireAuth, async (req: AuthRequest, res: Response, ne
       .eq('league_id', id)
       .order('pick', { ascending: true });
 
-    if (picksError) {
-      logger.error('[leagues] GET /:id/draft — picks DB error', { leagueId: id, dbError: picksError });
-      throw new AppError('Failed to fetch picks', 500);
-    }
+    if (picksError) throw new AppError('Failed to fetch picks', 500);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const draftedPlayerIds = (picks || []).reduce((acc: string[], p: any) => {
@@ -546,10 +426,10 @@ router.get('/:id/draft', requireAuth, async (req: AuthRequest, res: Response, ne
       return acc;
     }, []);
 
+    // Determine whose pick it is
     const currentPickNumber = (league as { draft_current_pick: number }).draft_current_pick || 0;
     const teamCount = (teams || []).length;
     let currentTeam = null;
-
     if (league.status === 'draft' && teamCount > 0 && currentPickNumber >= 0) {
       const idx = snakeDraftTeamIndex(currentPickNumber + 1, teamCount);
       const sortedTeams = [...(teams || [])].sort(
@@ -558,14 +438,6 @@ router.get('/:id/draft', requireAuth, async (req: AuthRequest, res: Response, ne
       currentTeam = sortedTeams[idx] || null;
     }
 
-    logger.info('[leagues] GET /:id/draft — success', {
-      leagueId: id,
-      status: league.status,
-      currentPick: currentPickNumber,
-      picksRecorded: picks?.length,
-      teamCount
-    });
-
     res.json({
       league,
       teams: teams || [],
@@ -573,48 +445,35 @@ router.get('/:id/draft', requireAuth, async (req: AuthRequest, res: Response, ne
       draftedPlayerIds,
       currentPickNumber,
       currentTeam,
-      totalPicks: teamCount * 15
+      totalPicks: teamCount * 15 // 15 rounds
     });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET /:id/draft — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues/:id/draft/start — Commissioner starts draft ─────────────
+// POST /api/leagues/:id/draft/start — Commissioner starts draft
 router.post('/:id/draft/start', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] POST /:id/draft/start', { userId: uid, leagueId: id });
   try {
-    logger.debug('[leagues] POST /:id/draft/start — fetching league', { leagueId: id });
+    const { id } = req.params;
+
     const { data: league, error: leagueError } = await supabaseAdmin
       .from('leagues')
       .select('*')
       .eq('id', id)
       .single();
 
-    if (leagueError || !league) {
-      logger.warn('[leagues] POST /:id/draft/start — league not found', { leagueId: id, dbError: leagueError });
-      throw new AppError('League not found', 404);
-    }
-    if (league.commissioner_id !== uid) {
-      logger.warn('[leagues] POST /:id/draft/start — not commissioner', { leagueId: id, userId: uid });
-      throw new AppError('Only the commissioner can start the draft', 403);
-    }
-    if (league.status !== 'setup') {
-      logger.warn('[leagues] POST /:id/draft/start — wrong status', { leagueId: id, status: league.status });
-      throw new AppError('League is not in setup mode', 400);
-    }
+    if (leagueError || !league) throw new AppError('League not found', 404);
+    if (league.commissioner_id !== req.user!.id) throw new AppError('Only the commissioner can start the draft', 403);
+    if (league.status !== 'setup') throw new AppError('League is not in setup mode', 400);
 
+    // Count teams
     const { data: teams } = await supabaseAdmin
       .from('teams')
       .select('id')
       .eq('league_id', id);
 
     const teamCount = (teams || []).length;
-    logger.debug('[leagues] POST /:id/draft/start — team count', { leagueId: id, teamCount });
-
     if (teamCount < 2) throw new AppError('Need at least 2 teams to start draft', 400);
 
     // Randomize draft order
@@ -626,30 +485,25 @@ router.post('/:id/draft/start', requireAuth, async (req: AuthRequest, res: Respo
         .eq('id', (shuffled[i] as { id: string }).id);
     }
 
-    logger.debug('[leagues] POST /:id/draft/start — updating league status to draft', { leagueId: id });
+    // Update league status
     await supabaseAdmin
       .from('leagues')
       .update({ status: 'draft', draft_current_pick: 0, draft_started_at: new Date().toISOString() })
       .eq('id', id);
 
-    logger.info('[leagues] POST /:id/draft/start — draft started!', { leagueId: id, teamCount });
     res.json({ success: true, message: 'Draft started! Draft order has been randomized.' });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST /:id/draft/start — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues/:id/draft/pick — Make a draft pick ─────────────────────
+// POST /api/leagues/:id/draft/pick — Make a draft pick
 router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] POST /:id/draft/pick', { userId: uid, leagueId: id, body: req.body });
   try {
-    const teamId = await requireMembership(id, uid);
+    const { id } = req.params;
+    const teamId = await requireMembership(id, req.user!.id);
     const body = draftPickSchema.parse(req.body);
 
-    logger.debug('[leagues] POST /:id/draft/pick — fetching league state', { leagueId: id });
     const { data: league, error: leagueError } = await supabaseAdmin
       .from('leagues')
       .select('*')
@@ -657,10 +511,7 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
       .single();
 
     if (leagueError || !league) throw new AppError('League not found', 404);
-    if (league.status !== 'draft') {
-      logger.warn('[leagues] POST /:id/draft/pick — not in draft', { leagueId: id, status: league.status });
-      throw new AppError('League is not in draft mode', 400);
-    }
+    if (league.status !== 'draft') throw new AppError('League is not in draft mode', 400);
 
     const { data: teams } = await supabaseAdmin
       .from('teams')
@@ -676,17 +527,7 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
     );
     const expectedTeam = sortedTeams[nextPickIndex];
 
-    logger.debug('[leagues] POST /:id/draft/pick — turn check', {
-      currentPick: currentPickNumber,
-      expectedTeamId: (expectedTeam as { id: string } | undefined)?.id,
-      pickingTeamId: teamId
-    });
-
     if (!expectedTeam || (expectedTeam as { id: string }).id !== teamId) {
-      logger.warn('[leagues] POST /:id/draft/pick — wrong team', {
-        leagueId: id, userId: uid, teamId,
-        expectedTeamId: (expectedTeam as { id: string } | undefined)?.id
-      });
       throw new AppError('It is not your turn to pick', 403);
     }
 
@@ -698,29 +539,21 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
       .eq('player_id', body.playerId)
       .single();
 
-    if (alreadyPicked) {
-      logger.warn('[leagues] POST /:id/draft/pick — player already drafted', { playerId: body.playerId });
-      throw new AppError('Player already drafted', 409);
-    }
+    if (alreadyPicked) throw new AppError('Player already drafted', 409);
 
+    // Check player exists
     const { data: player, error: playerError } = await supabaseAdmin
       .from('players')
       .select('id, position')
       .eq('id', body.playerId)
       .single();
 
-    if (playerError || !player) {
-      logger.warn('[leagues] POST /:id/draft/pick — player not found', { playerId: body.playerId, dbError: playerError });
-      throw new AppError('Player not found', 404);
-    }
+    if (playerError || !player) throw new AppError('Player not found', 404);
 
     const round = Math.ceil((currentPickNumber + 1) / teamCount);
     const pickInRound = ((currentPickNumber) % teamCount) + 1;
 
-    logger.debug('[leagues] POST /:id/draft/pick — recording pick', {
-      leagueId: id, teamId, playerId: body.playerId, round, pickInRound
-    });
-
+    // Insert draft pick
     const { data: pick, error: pickError } = await supabaseAdmin
       .from('draft_picks')
       .insert({
@@ -733,12 +566,9 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
       .select()
       .single();
 
-    if (pickError) {
-      logger.error('[leagues] POST /:id/draft/pick — failed to record pick', { dbError: pickError });
-      throw new AppError(`Failed to record pick: ${pickError.message}`, 500);
-    }
+    if (pickError) throw new AppError(`Failed to record pick: ${pickError.message}`, 500);
 
-    // Find roster slot
+    // Add player to roster — find first available bench slot
     const { data: existingRoster } = await supabaseAdmin
       .from('rosters')
       .select('slot')
@@ -748,6 +578,7 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
     const usedSlots = new Set((existingRoster || []).map((r: { slot: string }) => r.slot));
     const pos = (player as { position: string }).position;
 
+    // Try to place in starting slot first, then bench
     const slotPriority: string[] = [];
     if (pos === 'QB') slotPriority.push('QB');
     if (pos === 'RB') slotPriority.push('RB', 'RB2', 'FLEX');
@@ -758,7 +589,6 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
     slotPriority.push('BN1', 'BN2', 'BN3', 'BN4', 'BN5', 'BN6');
 
     const targetSlot = slotPriority.find(s => !usedSlots.has(s)) || 'BN6';
-    logger.debug('[leagues] POST /:id/draft/pick — placing in slot', { teamId, playerId: body.playerId, targetSlot });
 
     await supabaseAdmin
       .from('rosters')
@@ -770,12 +600,12 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
         acquired_via: 'draft'
       });
 
+    // Advance pick counter
     const newPickNumber = currentPickNumber + 1;
     const totalPicks = teamCount * 15;
-    const draftComplete = newPickNumber >= totalPicks;
 
-    if (draftComplete) {
-      logger.info('[leagues] POST /:id/draft/pick — DRAFT COMPLETE', { leagueId: id, totalPicks });
+    if (newPickNumber >= totalPicks) {
+      // Draft complete
       await supabaseAdmin
         .from('leagues')
         .update({ draft_current_pick: newPickNumber, status: 'active', current_week: 1 })
@@ -787,25 +617,25 @@ router.post('/:id/draft/pick', requireAuth, async (req: AuthRequest, res: Respon
         .eq('id', id);
     }
 
-    logger.info('[leagues] POST /:id/draft/pick — pick recorded', {
-      leagueId: id, teamId, playerId: body.playerId, pickNumber: newPickNumber, slot: targetSlot, draftComplete
+    res.status(201).json({
+      pick,
+      round,
+      pickInRound,
+      slot: targetSlot,
+      draftComplete: newPickNumber >= totalPicks
     });
-
-    res.status(201).json({ pick, round, pickInRound, slot: targetSlot, draftComplete });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST /:id/draft/pick — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── GET /api/leagues/:id/draft/available — Undrafted players ─────────────────
+// GET /api/leagues/:id/draft/available — Available (undrafted) players
 router.get('/:id/draft/available', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  const { search, position } = req.query;
-  logger.info('[leagues] GET /:id/draft/available', { userId: uid, leagueId: id, search, position });
   try {
-    await requireMembership(id, uid);
+    const { id } = req.params;
+    await requireMembership(id, req.user!.id);
+
+    const { search, position } = req.query;
 
     const { data: draftedPicks } = await supabaseAdmin
       .from('draft_picks')
@@ -813,7 +643,6 @@ router.get('/:id/draft/available', requireAuth, async (req: AuthRequest, res: Re
       .eq('league_id', id);
 
     const draftedIds = (draftedPicks || []).map((p: { player_id: string }) => p.player_id);
-    logger.debug('[leagues] GET /:id/draft/available — drafted count', { leagueId: id, drafted: draftedIds.length });
 
     let query = supabaseAdmin
       .from('players')
@@ -822,20 +651,22 @@ router.get('/:id/draft/available', requireAuth, async (req: AuthRequest, res: Re
       .order('adp', { ascending: true })
       .limit(100);
 
-    if (draftedIds.length > 0) query = query.not('id', 'in', `(${draftedIds.join(',')})`);
-    if (position && typeof position === 'string' && position !== 'ALL') query = query.eq('position', position);
-    if (search && typeof search === 'string') query = query.ilike('name', `%${search}%`);
-
-    const { data, error } = await query;
-    if (error) {
-      logger.error('[leagues] GET /:id/draft/available — DB error', { leagueId: id, dbError: error });
-      throw new AppError('Failed to fetch available players', 500);
+    if (draftedIds.length > 0) {
+      query = query.not('id', 'in', `(${draftedIds.join(',')})`);
     }
 
-    logger.debug('[leagues] GET /:id/draft/available — success', { leagueId: id, returned: data?.length });
+    if (position && typeof position === 'string' && position !== 'ALL') {
+      query = query.eq('position', position);
+    }
+
+    if (search && typeof search === 'string') {
+      query = query.ilike('name', `%${search}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new AppError('Failed to fetch available players', 500);
     res.json(data || []);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET /:id/draft/available — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
@@ -844,13 +675,11 @@ router.get('/:id/draft/available', requireAuth, async (req: AuthRequest, res: Re
 // WAIVER WIRE
 // ============================================================
 
-// ── GET /api/leagues/:id/waivers ─────────────────────────────────────────────
+// GET /api/leagues/:id/waivers — List waiver claims
 router.get('/:id/waivers', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] GET /:id/waivers', { userId: uid, leagueId: id });
   try {
-    await requireMembership(id, uid);
+    const { id } = req.params;
+    await requireMembership(id, req.user!.id);
 
     const { data, error } = await supabaseAdmin
       .from('waiver_claims')
@@ -864,26 +693,18 @@ router.get('/:id/waivers', requireAuth, async (req: AuthRequest, res: Response, 
       .order('priority', { ascending: true })
       .order('created_at', { ascending: true });
 
-    if (error) {
-      logger.error('[leagues] GET /:id/waivers — DB error', { leagueId: id, dbError: error });
-      throw new AppError('Failed to fetch waiver claims', 500);
-    }
-
-    logger.info('[leagues] GET /:id/waivers — success', { leagueId: id, count: data?.length });
+    if (error) throw new AppError('Failed to fetch waiver claims', 500);
     res.json(data || []);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET /:id/waivers — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues/:id/waiver — Submit waiver claim ───────────────────────
+// POST /api/leagues/:id/waiver — Submit waiver claim
 router.post('/:id/waiver', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] POST /:id/waiver — submit claim', { userId: uid, leagueId: id, body: req.body });
   try {
-    const teamId = await requireMembership(id, uid);
+    const { id } = req.params;
+    const teamId = await requireMembership(id, req.user!.id);
     const body = waiverClaimSchema.parse(req.body);
 
     const { data: league, error: leagueError } = await supabaseAdmin
@@ -892,15 +713,12 @@ router.post('/:id/waiver', requireAuth, async (req: AuthRequest, res: Response, 
       .eq('id', id)
       .single();
 
-    if (leagueError || !league) {
-      logger.warn('[leagues] POST /:id/waiver — league not found', { leagueId: id, dbError: leagueError });
-      throw new AppError('League not found', 404);
-    }
+    if (leagueError || !league) throw new AppError('League not found', 404);
     if (!['active', 'playoffs'].includes(league.status)) {
-      logger.warn('[leagues] POST /:id/waiver — waivers not available', { leagueId: id, status: league.status });
       throw new AppError('Waivers are only available during the active season', 400);
     }
 
+    // Check player not already on a roster
     const { data: onRoster } = await supabaseAdmin
       .from('rosters')
       .select('id, team:teams!inner(league_id)')
@@ -908,13 +726,9 @@ router.post('/:id/waiver', requireAuth, async (req: AuthRequest, res: Response, 
       .eq('teams.league_id', id)
       .single();
 
-    if (onRoster) {
-      logger.warn('[leagues] POST /:id/waiver — player already rostered', {
-        leagueId: id, playerId: body.addPlayerId
-      });
-      throw new AppError('Player is already on a roster', 409);
-    }
+    if (onRoster) throw new AppError('Player is already on a roster', 409);
 
+    // Check no duplicate pending claim
     const { data: existing } = await supabaseAdmin
       .from('waiver_claims')
       .select('id')
@@ -926,6 +740,7 @@ router.post('/:id/waiver', requireAuth, async (req: AuthRequest, res: Response, 
 
     if (existing) throw new AppError('You already have a pending claim for this player', 409);
 
+    // Get team's waiver priority
     const { data: team } = await supabaseAdmin
       .from('teams')
       .select('waiver_priority')
@@ -933,10 +748,6 @@ router.post('/:id/waiver', requireAuth, async (req: AuthRequest, res: Response, 
       .single();
 
     const priority = (team as { waiver_priority: number } | null)?.waiver_priority ?? 999;
-
-    logger.debug('[leagues] POST /:id/waiver — inserting claim', {
-      leagueId: id, teamId, addPlayer: body.addPlayerId, priority
-    });
 
     const { data: claim, error: claimError } = await supabaseAdmin
       .from('waiver_claims')
@@ -952,26 +763,18 @@ router.post('/:id/waiver', requireAuth, async (req: AuthRequest, res: Response, 
       .select()
       .single();
 
-    if (claimError) {
-      logger.error('[leagues] POST /:id/waiver — insert failed', { leagueId: id, dbError: claimError });
-      throw new AppError(`Failed to submit waiver claim: ${claimError.message}`, 500);
-    }
-
-    logger.info('[leagues] POST /:id/waiver — success', { leagueId: id, teamId, claimId: (claim as { id: string }).id });
+    if (claimError) throw new AppError(`Failed to submit waiver claim: ${claimError.message}`, 500);
     res.status(201).json(claim);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST /:id/waiver — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── DELETE /api/leagues/:id/waiver/:claimId — Cancel waiver claim ────────────
+// DELETE /api/leagues/:id/waiver/:claimId — Cancel a waiver claim
 router.delete('/:id/waiver/:claimId', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id, claimId } = req.params;
-  logger.info('[leagues] DELETE /:id/waiver/:claimId', { userId: uid, leagueId: id, claimId });
   try {
-    const teamId = await requireMembership(id, uid);
+    const { id, claimId } = req.params;
+    const teamId = await requireMembership(id, req.user!.id);
 
     const { data: claim, error } = await supabaseAdmin
       .from('waiver_claims')
@@ -979,41 +782,30 @@ router.delete('/:id/waiver/:claimId', requireAuth, async (req: AuthRequest, res:
       .eq('id', claimId)
       .single();
 
-    if (error || !claim) {
-      logger.warn('[leagues] DELETE waiver — claim not found', { claimId, dbError: error });
-      throw new AppError('Claim not found', 404);
-    }
-    if ((claim as { team_id: string }).team_id !== teamId) {
-      logger.warn('[leagues] DELETE waiver — not your claim', { claimId, teamId });
-      throw new AppError('Not your claim', 403);
-    }
-    if ((claim as { status: string }).status !== 'pending') {
-      logger.warn('[leagues] DELETE waiver — claim not pending', { claimId, status: (claim as { status: string }).status });
-      throw new AppError('Claim is no longer pending', 400);
-    }
+    if (error || !claim) throw new AppError('Claim not found', 404);
+    if ((claim as { team_id: string }).team_id !== teamId) throw new AppError('Not your claim', 403);
+    if ((claim as { status: string }).status !== 'pending') throw new AppError('Claim is no longer pending', 400);
 
     await supabaseAdmin
       .from('waiver_claims')
       .update({ status: 'cancelled' })
       .eq('id', claimId);
 
-    logger.info('[leagues] DELETE waiver — cancelled', { claimId, teamId });
     res.json({ success: true });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] DELETE waiver — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── GET /api/leagues/:id/free-agents ─────────────────────────────────────────
+// GET /api/leagues/:id/free-agents — Players not on any roster
 router.get('/:id/free-agents', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  const { search, position } = req.query;
-  logger.info('[leagues] GET /:id/free-agents', { userId: uid, leagueId: id, search, position });
   try {
-    await requireMembership(id, uid);
+    const { id } = req.params;
+    await requireMembership(id, req.user!.id);
 
+    const { search, position } = req.query;
+
+    // Get all rostered players in this league
     const { data: teams } = await supabaseAdmin
       .from('teams')
       .select('id')
@@ -1030,7 +822,6 @@ router.get('/:id/free-agents', requireAuth, async (req: AuthRequest, res: Respon
       : { data: [] };
 
     const rosteredIds = (rostered || []).map((r: { player_id: string }) => r.player_id);
-    logger.debug('[leagues] GET /:id/free-agents — rostered count', { leagueId: id, rostered: rosteredIds.length });
 
     let query = supabaseAdmin
       .from('players')
@@ -1038,34 +829,33 @@ router.get('/:id/free-agents', requireAuth, async (req: AuthRequest, res: Respon
       .order('adp', { ascending: true })
       .limit(100);
 
-    if (rosteredIds.length > 0) query = query.not('id', 'in', `(${rosteredIds.join(',')})`);
-    if (position && typeof position === 'string' && position !== 'ALL') query = query.eq('position', position);
-    if (search && typeof search === 'string') query = query.ilike('name', `%${search}%`);
-
-    const { data, error } = await query;
-    if (error) {
-      logger.error('[leagues] GET /:id/free-agents — DB error', { leagueId: id, dbError: error });
-      throw new AppError('Failed to fetch free agents', 500);
+    if (rosteredIds.length > 0) {
+      query = query.not('id', 'in', `(${rosteredIds.join(',')})`);
     }
 
-    logger.info('[leagues] GET /:id/free-agents — success', { leagueId: id, returned: data?.length });
+    if (position && typeof position === 'string' && position !== 'ALL') {
+      query = query.eq('position', position);
+    }
+
+    if (search && typeof search === 'string') {
+      query = query.ilike('name', `%${search}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new AppError('Failed to fetch free agents', 500);
     res.json(data || []);
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] GET /:id/free-agents — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });
 
-// ── POST /api/leagues/:id/roster/drop — Drop a player ────────────────────────
+// POST /api/leagues/:id/roster/drop — Drop a player (free agency release)
 router.post('/:id/roster/drop', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const uid = req.user!.id;
-  const { id } = req.params;
-  logger.info('[leagues] POST /:id/roster/drop', { userId: uid, leagueId: id, body: req.body });
   try {
-    const teamId = await requireMembership(id, uid);
+    const { id } = req.params;
+    const teamId = await requireMembership(id, req.user!.id);
     const { playerId } = z.object({ playerId: z.string() }).parse(req.body);
 
-    logger.debug('[leagues] POST /:id/roster/drop — deleting roster entry', { teamId, playerId });
     const { error } = await supabaseAdmin
       .from('rosters')
       .delete()
@@ -1073,12 +863,9 @@ router.post('/:id/roster/drop', requireAuth, async (req: AuthRequest, res: Respo
       .eq('player_id', playerId)
       .eq('week', 0);
 
-    if (error) {
-      logger.error('[leagues] POST /:id/roster/drop — DB error', { teamId, playerId, dbError: error });
-      throw new AppError('Failed to drop player', 500);
-    }
+    if (error) throw new AppError('Failed to drop player', 500);
 
-    logger.debug('[leagues] POST /:id/roster/drop — logging transaction', { teamId, playerId });
+    // Log transaction
     await supabaseAdmin.from('transactions').insert({
       league_id: id,
       type: 'drop',
@@ -1088,10 +875,8 @@ router.post('/:id/roster/drop', requireAuth, async (req: AuthRequest, res: Respo
       week: 0
     });
 
-    logger.info('[leagues] POST /:id/roster/drop — success', { teamId, playerId });
     res.json({ success: true });
   } catch (err) {
-    if (!(err instanceof AppError)) logger.error('[leagues] POST /:id/roster/drop — unexpected error', { leagueId: id, userId: uid, error: err });
     next(err);
   }
 });

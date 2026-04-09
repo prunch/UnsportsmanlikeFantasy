@@ -8,6 +8,7 @@ import DashboardPage from './pages/DashboardPage';
 import CreateLeaguePage from './pages/CreateLeaguePage';
 import JoinLeaguePage from './pages/JoinLeaguePage';
 import LeaguePage from './pages/LeaguePage';
+import NotificationsPage from './pages/NotificationsPage';
 import AdminPage from './pages/admin/AdminPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminLeaguesPage from './pages/admin/AdminLeaguesPage';
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/leagues/create" element={<CreateLeaguePage />} />
         <Route path="/leagues/join" element={<JoinLeaguePage />} />
         <Route path="/leagues/:id/*" element={<LeaguePage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
       </Route>
 
       {/* Admin */}

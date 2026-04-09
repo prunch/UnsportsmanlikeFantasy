@@ -2,12 +2,12 @@
 
 **Project:** Gridiron Cards  
 **Last Updated:** April 9, 2026  
-**Current Phase:** Phase 3 — MTG Card System ✅ BUILT  
-**Current Agent:** Monkey ✅ (Phase 3 code complete, builds pass, migrations ready)
+**Current Phase:** Phase 4 — Polish & Live Features ✅ BUILT  
+**Current Agent:** Monkey ✅ (Phase 4 code complete, both builds pass, migrations ready)
 
 ---
 
-## Overall Status: ✅ PHASE 3 CODE COMPLETE / 🔄 DEPLOYMENT PENDING (needs Supabase migrations)
+## Overall Status: ✅ PHASE 4 CODE COMPLETE / 🔄 DEPLOYMENT PENDING (needs Supabase migrations)
 
 This is the **3rd attempt** at building this project. All Phase 1 code is built, compiled, and tested. Deployment to `http://srv1561102.hstgr.cloud:4444/` requires **Frank to complete the infrastructure steps** listed below.
 
@@ -80,6 +80,48 @@ This is the **3rd attempt** at building this project. All Phase 1 code is built,
 
 ---
 
+## Phase 4: Polish & Live Features — Checklist ✅ COMPLETE
+
+### Database Migrations (Ready to run in Supabase SQL Editor)
+- [x] `008_phase4_polish.sql` — `paused` status, `trade_review_enabled`, RLS policies, indexes
+
+### Backend API
+- [x] `GET/POST /api/leagues/:id/chat` — Send & fetch chat messages
+- [x] `DELETE /api/leagues/:id/chat/:messageId` — Commissioner soft-delete
+- [x] `GET /api/notifications` — User notifications (with ?unread=true filter)
+- [x] `GET /api/notifications/unread-count` — Badge count
+- [x] `POST /api/notifications/:id/read` — Mark one read
+- [x] `POST /api/notifications/read-all` — Mark all read
+- [x] `DELETE /api/notifications/:id` — Dismiss
+- [x] `DELETE /api/notifications` — Clear all
+- [x] `GET /api/leagues/:id/scoreboard` — Weekly matchups with live scores
+- [x] `GET /api/leagues/:id/scoreboard/standings` — Full standings
+- [x] `GET /api/leagues/:id/scoreboard/live-players` — Live player scores
+- [x] `POST /api/leagues/:id/scoreboard/update-score` — Admin: push Tank01 score
+- [x] `GET /api/leagues/:id/commissioner/overview` — Commissioner dashboard
+- [x] `PATCH /api/leagues/:id/commissioner/settings` — Edit league settings
+- [x] `POST /api/leagues/:id/commissioner/pause` — Pause/resume season
+- [x] `POST /api/leagues/:id/commissioner/reset-waivers` — Reset waiver order
+- [x] `POST /api/leagues/:id/commissioner/roster-override` — Emergency add/drop
+- [x] `POST /api/leagues/:id/commissioner/trade-review/:id` — Approve/veto trade
+- [x] TypeScript compiles cleanly (zero errors)
+
+### Frontend
+- [x] `ChatPage.tsx` — League chat room with polling, own/other bubbles, commissioner delete
+- [x] `ScoreboardPage.tsx` — Scoreboard + standings, week navigation, live badge
+- [x] `CommissionerPage.tsx` — Settings, pause/resume, waivers reset, trade review, roster override
+- [x] `NotificationsPage.tsx` — Notification center with read/dismiss/clear
+- [x] `LandingPage.tsx` — Full marketing page redesign
+- [x] `Layout.tsx` — Notification bell with unread badge (polls every 30s)
+- [x] `LeaguePage.tsx` — Added Chat, Scoreboard, Commissioner tabs + routes
+- [x] `App.tsx` — Added /notifications route
+- [x] Tailwind/TypeScript build passes cleanly (zero errors)
+
+### Documentation
+- [x] `PHASE4_NOTES.md` — Full technical documentation
+
+---
+
 ## Phase 3: Card System — Checklist ✅ COMPLETE
 
 ### Database Migrations (Ready to run in Supabase SQL Editor)
@@ -120,10 +162,11 @@ This is the **3rd attempt** at building this project. All Phase 1 code is built,
 | Issue | Status | Action Required |
 |-------|--------|-----------------|
 | Supabase project | 🔴 Not created | **Frank:** Create at supabase.com, get URL + keys |
-| Phase 3 migrations | 🟡 Ready to run | **Frank:** Run migrations 004–007 in Supabase SQL Editor after Supabase is live |
+| All migrations 001–008 | 🟡 Ready to run | **Frank:** Run in Supabase SQL Editor in order after Supabase is live |
 | Production nginx/port 4444 | 🔴 No host access | **Frank:** SSH to VPS, run deploy.sh |
 | Tank01 API key | 🟡 Placeholder only | Frank to configure via admin panel after deploy |
-| Elevated exec on VPS | 🔴 Not available in sandbox | Must deploy from VPS directly |
+| Supabase Realtime | 🟡 Optional | Enable in Supabase dashboard for true WebSocket chat (polling works without it) |
+| Score sync cron | 🟡 Not built | POST /api/leagues/:id/scoreboard/update-score endpoint exists; cron needed to call Tank01 every 60s |
 
 ---
 

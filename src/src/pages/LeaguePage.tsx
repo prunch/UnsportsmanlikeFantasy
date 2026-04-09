@@ -3,12 +3,15 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { apiGet, apiPost } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers } from 'lucide-react';
+import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers, MessageCircle, Trophy, Shield } from 'lucide-react';
 import RosterPage from './league/RosterPage';
 import DraftRoomPage from './league/DraftRoomPage';
 import WaiverWirePage from './league/WaiverWirePage';
 import CardDeckPage from './CardDeckPage';
 import CardPickPage from './CardPickPage';
+import ChatPage from './league/ChatPage';
+import ScoreboardPage from './league/ScoreboardPage';
+import CommissionerPage from './league/CommissionerPage';
 
 export interface League {
   id: string;
@@ -36,7 +39,7 @@ export interface League {
   }>;
 }
 
-function LeagueNav({ leagueId, status }: { leagueId: string; status: string }) {
+function LeagueNav({ leagueId, status, isCommissioner }: { leagueId: string; status: string; isCommissioner: boolean }) {
   const location = useLocation();
   const base = `/leagues/${leagueId}`;
 
@@ -49,6 +52,13 @@ function LeagueNav({ leagueId, status }: { leagueId: string; status: string }) {
       : []),
     ...(status === 'active' || status === 'playoffs'
       ? [{ to: `${base}/cards`, label: 'Cards', icon: <Layers size={16} /> }]
+      : []),
+    ...(status === 'active' || status === 'playoffs' || status === 'complete'
+      ? [{ to: `${base}/scoreboard`, label: 'Scoreboard', icon: <Trophy size={16} /> }]
+      : []),
+    { to: `${base}/chat`, label: 'Chat', icon: <MessageCircle size={16} /> },
+    ...(isCommissioner
+      ? [{ to: `${base}/commissioner`, label: 'Commissioner', icon: <Shield size={16} /> }]
       : [])
   ];
 
@@ -281,7 +291,7 @@ export default function LeaguePage() {
       </div>
 
       {/* Tab nav */}
-      <LeagueNav leagueId={id!} status={league.status} />
+      <LeagueNav leagueId={id!} status={league.status} isCommissioner={isCommissioner} />
 
       {/* Routes */}
       <Routes>
@@ -331,6 +341,27 @@ export default function LeaguePage() {
           element={
             league.status === 'active' || league.status === 'playoffs' ? (
               <CardPickPage />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
+        <Route path="chat" element={<ChatPage league={league} />} />
+        <Route
+          path="scoreboard"
+          element={
+            league.status === 'active' || league.status === 'playoffs' || league.status === 'complete' ? (
+              <ScoreboardPage league={league} />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
+        <Route
+          path="commissioner"
+          element={
+            isCommissioner ? (
+              <CommissionerPage league={league} onLeagueUpdate={loadLeague} />
             ) : (
               <Navigate to={`/leagues/${id}`} replace />
             )
