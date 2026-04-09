@@ -21,6 +21,13 @@ export async function apiFetch<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }));
+    // Surface Zod validation field errors if present
+    if (error.details && Array.isArray(error.details) && error.details.length > 0) {
+      const fieldErrors = error.details
+        .map((d: { path: string; message: string }) => `${d.path}: ${d.message}`)
+        .join('; ');
+      throw new Error(fieldErrors);
+    }
     throw new Error(error.error || `HTTP ${response.status}`);
   }
 

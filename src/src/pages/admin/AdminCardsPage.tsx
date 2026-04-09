@@ -63,7 +63,18 @@ export default function AdminCardsPage() {
       setShowForm(false);
       setEditing(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save card');
+      if (err instanceof Error) {
+        // Try to extract Zod validation detail from error message
+        try {
+          // apiFetch throws new Error(error.error) — but details are lost.
+          // We'll show the raw message; field-level errors come from the form itself.
+          toast.error(err.message);
+        } catch {
+          toast.error('Failed to save card');
+        }
+      } else {
+        toast.error('Failed to save card');
+      }
     }
   }
 
@@ -202,6 +213,7 @@ export default function AdminCardsPage() {
 
 function CardForm({ card, onSave, onCancel }: { card: Card; onSave: (c: Card) => void; onCancel: () => void }) {
   const [form, setForm] = useState<Card>({ ...card });
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
     const { name, value, type } = e.target;
@@ -210,21 +222,72 @@ function CardForm({ card, onSave, onCancel }: { card: Card; onSave: (c: Card) =>
       ...prev,
       [name]: type === 'checkbox' ? checked : name === 'modifier_value' ? parseFloat(value) : value
     }));
+    // Clear field error on change
+    if (errors[name]) setErrors(prev => { const next = { ...prev }; delete next[name]; return next; });
   }
 
+  function validate(): boolean {
+    const newErrors: Record<string, string> = {};
+    if (!form.title || form.title.trim().length < 2) newErrors.title = 'Title must be at least 2 characters';
+    if (!form.description || form.description.trim().length < 10) newErrors.description = 'Description must be at least 10 characters';
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  }
+
+  function handleSave() {
+    if (validate()) onSave(form);
+  }
+
+  const descLen = form.description?.length ?? 0;
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 w-full max-w-lg">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 w-full max-w-lg my-auto">
         <h2 className="text-white font-bold text-xl mb-5">{form.id ? 'Edit Card' : 'New Card'}</h2>
         <div className="space-y-4">
           <div>
             <label className="label">Title</label>
-            <input name="title" className="input" value={form.title} onChange={handleChange} placeholder="Party Boat" required />
+            <input name="title" className={`input ${errors.title ? 'border-red-500' : ''}`} value={form.title} onChange={handleChange} placeholder="Party Boat" />
+            {errors.title && <p className="text-red-400 text-xs mt-1">{errors.title}</p>}
           </div>
           <div>
-            <label className="label">Description</label>
-            <textarea name="description" className="input h-20 resize-none" value={form.description} onChange={handleChange} placeholder="All WRs lose 15% after a fun day on the boat" />
+            <div className="flex items-center justify-between mb-1">
+              <label className="label !mb-0">Description</label>
+              <span className={`text-xs ${descLen < 10 ? 'text-amber-400' : 'text-slate-500'}`}>
+                {descLen}/500 {descLen < 10 && `— min 10 characters`}
+              </span>
+            </div>
+            <textarea
+              name="description"
+              className={`input h-20 resize-none ${errors.description ? 'border-red-500' : ''}`}
+              value={form.description}
+              onChange={handleChange}
+              placeholder="All WRs lose 15% after a fun day on the boat"
+            />
+            {errors.description && <p className="text-red-400 text-xs mt-1">{errors.description}</p>}
           </div>
+          <div>
+            <label className="label">Target Type</label>
+            <select name="target_type" className="input" value={form.target_type} onChange={handleChange}>
+              <option value="position">Position</option>
+              <option value="player">Player</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          {form.target_type === 'position' && (
+            <div>
+              <label className="label">Target Position</label>
+              <select name="target_position" className="input" value={form.target_position || ''} onChange={handleChange}>
+                <option value="QB">QB</option>
+                <option value="RB">RB</option>
+                <option value="WR">WR</option>
+                <option value="TE">TE</option>
+                <option value="K">K</option>
+                <option value="DEF">DEF</option>
+                <option value="All">All</option>
+              </select>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Effect Type</label>
@@ -241,23 +304,9 @@ function CardForm({ card, onSave, onCancel }: { card: Card; onSave: (c: Card) =>
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Modifier Value</label>
-              <input type="number" name="modifier_value" className="input" value={form.modifier_value} onChange={handleChange} step="0.5" />
-            </div>
-            <div>
-              <label className="label">Target Position</label>
-              <select name="target_position" className="input" value={form.target_position || ''} onChange={handleChange}>
-                <option value="QB">QB</option>
-                <option value="RB">RB</option>
-                <option value="WR">WR</option>
-                <option value="TE">TE</option>
-                <option value="K">K</option>
-                <option value="DEF">DEF</option>
-                <option value="All">All</option>
-              </select>
-            </div>
+          <div>
+            <label className="label">Modifier Value</label>
+            <input type="number" name="modifier_value" className="input" value={form.modifier_value} onChange={handleChange} step="0.5" />
           </div>
           <div>
             <label className="label">Rarity</label>
@@ -273,7 +322,7 @@ function CardForm({ card, onSave, onCancel }: { card: Card; onSave: (c: Card) =>
           </label>
         </div>
         <div className="flex gap-3 mt-6">
-          <button onClick={() => onSave(form)} className="btn-primary flex-1">Save Card</button>
+          <button onClick={handleSave} className="btn-primary flex-1">Save Card</button>
           <button onClick={onCancel} className="btn-secondary flex-1">Cancel</button>
         </div>
       </div>
