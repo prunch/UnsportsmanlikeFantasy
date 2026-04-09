@@ -12,7 +12,7 @@ router.get('/', (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     supabase: !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY,
     supabaseUrl: process.env.SUPABASE_URL ? '✓ set' : '✗ missing',
-    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓ set' : '✗ missing (using dev-secret!)',
+    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓ set' : '✗ missing',
     jwtSecret: process.env.JWT_SECRET ? '✓ set' : '✗ missing',
     tank01: !!process.env.TANK01_API_KEY,
     nodeEnv: process.env.NODE_ENV || 'development'
@@ -21,66 +21,80 @@ router.get('/', (req: Request, res: Response) => {
   res.json(status);
 });
 
-// Diagnostic endpoint — tests actual DB connectivity per table
-// Remove this in Phase 4+ once all issues are resolved
+// Deep diagnostic — runs the EXACT queries the leagues routes use
+// Keep until leagues issue fully resolved, then remove
 router.get('/db-diag', async (req: Request, res: Response) => {
-  logger.info('[health] GET /db-diag — running DB diagnostics');
+  logger.info('[health] GET /db-diag — running deep DB diagnostics');
 
   const serviceKeyRaw = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-  const anonKeyRaw = process.env.SUPABASE_ANON_KEY || '';
+  const FRANK_ID = '9bb71524-f0f2-493a-8071-8c83d9186398';
 
   const results: Record<string, unknown> = {
     supabaseUrl: process.env.SUPABASE_URL || 'NOT SET',
-    serviceKeyPrefix: serviceKeyRaw.substring(0, 30) + (serviceKeyRaw.length > 30 ? '...' : ''),
+    serviceKeyPrefix: serviceKeyRaw.substring(0, 30) + '...',
     serviceKeyLength: serviceKeyRaw.length,
     serviceKeyIsJwt: serviceKeyRaw.startsWith('eyJ'),
-    anonKeyPrefix: anonKeyRaw.substring(0, 30) + (anonKeyRaw.length > 30 ? '...' : ''),
-    anonKeyIsJwt: anonKeyRaw.startsWith('eyJ'),
   };
 
-  // Test each table
-  const tables = ['users', 'players', 'leagues', 'teams'] as const;
-  for (const table of tables) {
-    try {
-      const { data, error } = await supabaseAdmin
-        .from(table)
-        .select('*', { count: 'exact', head: true });
-      results[`table_${table}`] = error
-        ? { ok: false, error: error.message, code: error.code, hint: error.hint }
-        : { ok: true };
-    } catch (e) {
-      results[`table_${table}`] = { ok: false, threw: String(e) };
-    }
+  // Test 1: exact GET /leagues query (teams JOIN leagues for user)
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('teams')
+      .select(`league:leagues(id, name, status, season, max_teams, current_week, invite_code, commissioner_id, created_at)`)
+      .eq('user_id', FRANK_ID);
+    results['get_leagues_query'] = error
+      ? { ok: false, error: error.message, code: error.code, hint: error.hint, details: error.details }
+      : { ok: true, count: data?.length, sample: data?.[0] };
+  } catch (e) {
+    results['get_leagues_query'] = { ok: false, threw: String(e) };
   }
 
-  // Test a leagues INSERT (dry run — insert then immediately delete)
+  // Test 2: exact POST /leagues insert (with Frank's real commissioner_id)
   try {
-    const testId = '00000000-0000-0000-0000-000000000001';
-    const { error: insertError } = await supabaseAdmin
+    const { v4: uuidv4 } = await import('uuid');
+    const testId = uuidv4();
+    const { data, error } = await supabaseAdmin
       .from('leagues')
       .insert({
         id: testId,
-        name: '__diag_test__',
-        commissioner_id: '00000000-0000-0000-0000-000000000000',
+        name: '__diag_insert_test__',
+        commissioner_id: FRANK_ID,
         max_teams: 10,
         draft_type: 'snake',
-        invite_code: 'DIAGTEST',
+        draft_timer_seconds: 90,
+        trade_deadline_week: 11,
+        invite_code: 'DIAGZZ99',
         status: 'setup',
         season: 2026,
         current_week: 0
-      });
+      })
+      .select()
+      .single();
 
-    if (insertError) {
-      results['leagues_insert_test'] = { ok: false, error: insertError.message, code: insertError.code };
+    if (error) {
+      results['post_leagues_insert'] = { ok: false, error: error.message, code: error.code, hint: error.hint, details: error.details };
     } else {
+      // Clean up
       await supabaseAdmin.from('leagues').delete().eq('id', testId);
-      results['leagues_insert_test'] = { ok: true };
+      results['post_leagues_insert'] = { ok: true, insertedId: (data as { id: string }).id };
     }
   } catch (e) {
-    results['leagues_insert_test'] = { ok: false, threw: String(e) };
+    results['post_leagues_insert'] = { ok: false, threw: String(e) };
   }
 
-  logger.info('[health] GET /db-diag — results', results);
+  // Test 3: plain leagues count (service role sanity check)
+  try {
+    const { count, error } = await supabaseAdmin
+      .from('leagues')
+      .select('*', { count: 'exact', head: true });
+    results['leagues_count'] = error
+      ? { ok: false, error: error.message }
+      : { ok: true, count };
+  } catch (e) {
+    results['leagues_count'] = { ok: false, threw: String(e) };
+  }
+
+  logger.info('[health] GET /db-diag — complete', results);
   res.json(results);
 });
 
