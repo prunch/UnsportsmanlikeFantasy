@@ -12,6 +12,7 @@ import authRouter from './routes/auth';
 import usersRouter from './routes/users';
 import leaguesRouter from './routes/leagues';
 import adminRouter from './routes/admin';
+import rankingsRouter from './routes/rankings';
 import cardsRouter from './routes/cards';
 import chatRouter from './routes/chat';
 import notificationsRouter from './routes/notifications';
@@ -61,6 +62,7 @@ app.use('/api/leagues', scoreboardRouter);
 app.use('/api/leagues', commissionerRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/admin/rankings', rankingsRouter);
 
 // DEBUG-ONLY: REMOVE FOR PROD
 if (process.env.DEBUG_DRAFT === 'true') {
