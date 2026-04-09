@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '../../stores/authStore';
-import { apiGet, apiPost, apiPatch, apiDelete } from '../../utils/api';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/api';
 import toast from 'react-hot-toast';
-import { Plus, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, TrendingUp, TrendingDown, Eye } from 'lucide-react';
 
 interface Card {
   id?: string;
@@ -52,7 +52,7 @@ export default function AdminCardsPage() {
   async function handleSave(card: Card) {
     try {
       if (card.id) {
-        const updated = await apiPatch<Card>(`/admin/cards/${card.id}`, card, token || undefined);
+        const updated = await apiPut<Card>(`/admin/cards/${card.id}`, card, token || undefined);
         setCards(prev => prev.map(c => c.id === card.id ? updated : c));
         toast.success('Card updated');
       } else {
@@ -78,11 +78,13 @@ export default function AdminCardsPage() {
     }
   }
 
-  const rarityColor: Record<string, string> = {
-    common: 'text-slate-400',
-    uncommon: 'text-green-400',
-    rare: 'text-blue-400'
+  const rarityStyles: Record<string, { border: string; label: string; badge: string }> = {
+    common:   { border: 'border-slate-600',    label: 'text-slate-400',  badge: 'bg-slate-700 text-slate-300' },
+    uncommon: { border: 'border-green-500/50', label: 'text-green-400',  badge: 'bg-green-500/10 text-green-400' },
+    rare:     { border: 'border-blue-500/50',  label: 'text-blue-400',   badge: 'bg-blue-500/10 text-blue-400' }
   };
+
+  const [preview, setPreview] = useState<Card | null>(null);
 
   return (
     <div>
@@ -105,45 +107,88 @@ export default function AdminCardsPage() {
         />
       )}
 
-      {loading ? (
-        <p className="text-slate-400">Loading...</p>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {cards.map(card => (
-            <div key={card.id} className={`card border ${!card.is_active ? 'opacity-50' : ''}`}>
-              <div className="flex items-start justify-between mb-2">
-                <span className={`text-xs font-bold uppercase tracking-wider ${rarityColor[card.rarity]}`}>
-                  {card.rarity}
-                </span>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  card.effect_type === 'buff' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-                }`}>
-                  {card.effect_type}
+      {/* Card Preview Modal */}
+      {preview && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setPreview(null)}>
+          <div className="bg-slate-900 border-2 border-slate-700 rounded-xl p-1 max-w-xs w-full" onClick={e => e.stopPropagation()}>
+            <div className={`rounded-xl border-2 ${rarityStyles[preview.rarity]?.border || 'border-slate-600'} bg-slate-800 p-5`}>
+              <div className="flex items-start justify-between mb-3">
+                <span className={`text-xs font-bold uppercase tracking-wider ${rarityStyles[preview.rarity]?.label}`}>{preview.rarity}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${preview.effect_type === 'buff' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                  {preview.effect_type === 'buff' ? <TrendingUp size={10}/> : <TrendingDown size={10}/>}
+                  {preview.effect_type}
                 </span>
               </div>
-              <h3 className="text-white font-bold mb-1">{card.title}</h3>
-              <p className="text-slate-400 text-xs mb-3">{card.description}</p>
-              <div className="text-xs text-slate-500 mb-3">
-                {card.modifier_type === 'percentage' ? `${card.modifier_value}%` : `+${card.modifier_value} pts`}
-                {' · '}
-                {card.target_position || card.target_type}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { setEditing({ ...card }); setShowForm(true); }}
-                  className="flex items-center gap-1 text-xs btn-secondary py-1 px-2"
-                >
-                  <Edit2 size={12} /> Edit
-                </button>
-                <button
-                  onClick={() => handleDelete(card)}
-                  className="flex items-center gap-1 text-xs btn-danger py-1 px-2"
-                >
-                  <Trash2 size={12} /> Delete
-                </button>
+              <h3 className="text-white font-bold text-lg mb-2">{preview.title}</h3>
+              <p className="text-slate-400 text-sm leading-relaxed mb-4">{preview.description}</p>
+              <div className="pt-3 border-t border-slate-700 flex items-center justify-between">
+                <span className={`font-bold ${preview.effect_type === 'buff' ? 'text-green-400' : 'text-red-400'}`}>
+                  {preview.effect_type === 'buff' ? '+' : '-'}{preview.modifier_value}{preview.modifier_type === 'percentage' ? '%' : ' pts'}
+                </span>
+                <span className="text-slate-500 text-sm">{preview.target_position || preview.target_type}</span>
               </div>
             </div>
-          ))}
+            <div className="text-center mt-3">
+              <button onClick={() => setPreview(null)} className="text-slate-400 text-sm hover:text-white">Close Preview</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-40 bg-slate-800 rounded-xl animate-pulse" />)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {cards.map(card => {
+            const rs = rarityStyles[card.rarity] || rarityStyles.common;
+            return (
+              <div key={card.id} className={`card border-2 ${rs.border} ${!card.is_active ? 'opacity-50' : ''} flex flex-col`}>
+                <div className="flex items-start justify-between mb-2">
+                  <span className={`text-xs font-bold uppercase tracking-wider ${rs.label}`}>{card.rarity}</span>
+                  <div className="flex items-center gap-1.5">
+                    {!card.is_active && <span className="text-xs text-red-400">Inactive</span>}
+                    <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                      card.effect_type === 'buff' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
+                    }`}>
+                      {card.effect_type === 'buff' ? <TrendingUp size={9}/> : <TrendingDown size={9}/>}
+                      {card.effect_type}
+                    </span>
+                  </div>
+                </div>
+                <h3 className="text-white font-bold mb-1">{card.title}</h3>
+                <p className="text-slate-400 text-xs mb-3 flex-1">{card.description}</p>
+                <div className="text-xs text-slate-500 mb-3">
+                  <span className={card.effect_type === 'buff' ? 'text-green-400' : 'text-red-400'}>
+                    {card.effect_type === 'buff' ? '+' : '-'}{card.modifier_value}{card.modifier_type === 'percentage' ? '%' : ' pts'}
+                  </span>
+                  {' · '}
+                  {card.target_position || card.target_type}
+                </div>
+                <div className="flex gap-2 pt-3 border-t border-slate-700">
+                  <button
+                    onClick={() => setPreview(card)}
+                    className="flex items-center gap-1 text-xs btn-secondary py-1 px-2"
+                  >
+                    <Eye size={12} /> Preview
+                  </button>
+                  <button
+                    onClick={() => { setEditing({ ...card }); setShowForm(true); }}
+                    className="flex items-center gap-1 text-xs btn-secondary py-1 px-2"
+                  >
+                    <Edit2 size={12} /> Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(card)}
+                    className="flex items-center gap-1 text-xs btn-danger py-1 px-2 ml-auto"
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </div>
+              </div>
+            );
+          })}
           {cards.length === 0 && (
             <div className="col-span-3 text-center py-12 text-slate-500">
               No cards yet. Create your first card!

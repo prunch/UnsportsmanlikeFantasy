@@ -1,13 +1,13 @@
 # Build Status — Fantasy Football App
 
 **Project:** Gridiron Cards  
-**Last Updated:** April 8, 2026  
-**Current Phase:** Phase 1 — Foundation  
-**Current Agent:** Monkey ✅ (Build complete, deployment partial)
+**Last Updated:** April 9, 2026  
+**Current Phase:** Phase 3 — MTG Card System ✅ BUILT  
+**Current Agent:** Monkey ✅ (Phase 3 code complete, builds pass, migrations ready)
 
 ---
 
-## Overall Status: ✅ PHASE 1 CODE COMPLETE / 🔄 DEPLOYMENT PENDING
+## Overall Status: ✅ PHASE 3 CODE COMPLETE / 🔄 DEPLOYMENT PENDING (needs Supabase migrations)
 
 This is the **3rd attempt** at building this project. All Phase 1 code is built, compiled, and tested. Deployment to `http://srv1561102.hstgr.cloud:4444/` requires **Frank to complete the infrastructure steps** listed below.
 
@@ -78,11 +78,49 @@ This is the **3rd attempt** at building this project. All Phase 1 code is built,
 
 ---
 
+---
+
+## Phase 3: Card System — Checklist ✅ COMPLETE
+
+### Database Migrations (Ready to run in Supabase SQL Editor)
+- [x] `004_phase3_cards.sql` — `cards` table + 12 seed cards
+- [x] `005_phase3_user_cards.sql` — `user_cards` + `weekly_card_picks` tables
+- [x] `006_phase3_played_cards.sql` — `played_cards` table
+- [x] `007_phase3_switcheroo.sql` — `user_switcheroo` + `switcheroo_log` tables
+
+### Backend API
+- [x] `GET /api/leagues/:id/cards` — User's card stack
+- [x] `GET /api/leagues/:id/cards/pick` — Weekly 12-card pick session
+- [x] `POST /api/leagues/:id/cards/pick` — Submit 3 picks
+- [x] `POST /api/leagues/:id/cards/play` — Play a card (slot-based)
+- [x] `GET /api/leagues/:id/cards/played` — Played cards for current week
+- [x] `POST /api/leagues/:id/switcheroo` — Activate Switcheroo
+- [x] `GET /api/leagues/:id/switcheroo` — Switcheroo status
+- [x] `PUT /api/admin/cards/:id` — Full replace (added to admin.ts)
+- [x] TypeScript compiles cleanly (zero errors)
+
+### Frontend
+- [x] `Card.tsx` — Card component with flip animation (face-up/down)
+- [x] `CardStack.tsx` — 6-slot stack display
+- [x] `CardPlaySlot.tsx` — 3 play slot components
+- [x] `CardReveal.tsx` — Post-kickoff reveal UI
+- [x] `CardDeckPage.tsx` — Full deck management (stack, play, played, switcheroo tabs)
+- [x] `CardPickPage.tsx` — 12-card flip pick UI
+- [x] `LeaguePage.tsx` — Cards tab added (active/playoffs leagues)
+- [x] `AdminCardsPage.tsx` — Preview modal + rarity styling + PUT support
+- [x] Tailwind/TypeScript build passes cleanly (zero errors)
+
+### Documentation
+- [x] `CARD_SYSTEM.md` — Full technical documentation
+
+---
+
 ## Known Blockers
 
 | Issue | Status | Action Required |
 |-------|--------|-----------------|
 | Supabase project | 🔴 Not created | **Frank:** Create at supabase.com, get URL + keys |
+| Phase 3 migrations | 🟡 Ready to run | **Frank:** Run migrations 004–007 in Supabase SQL Editor after Supabase is live |
 | Production nginx/port 4444 | 🔴 No host access | **Frank:** SSH to VPS, run deploy.sh |
 | Tank01 API key | 🟡 Placeholder only | Frank to configure via admin panel after deploy |
 | Elevated exec on VPS | 🔴 Not available in sandbox | Must deploy from VPS directly |

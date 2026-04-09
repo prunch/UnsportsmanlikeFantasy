@@ -13,7 +13,7 @@ import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminLeaguesPage from './pages/admin/AdminLeaguesPage';
 import AdminCardsPage from './pages/admin/AdminCardsPage';
 import AdminConfigPage from './pages/admin/AdminConfigPage';
-import AdminPlayersPage from './pages/admin/AdminPlayersPage';
+import DebugDraftPanel from './components/DebugDraftPanel'; // DEBUG-ONLY: REMOVE FOR PROD
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
@@ -36,6 +36,7 @@ function RequireGuest({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
+    <>
     <Routes>
       {/* Public */}
       <Route path="/" element={<LandingPage />} />
@@ -57,11 +58,14 @@ export default function App() {
         <Route path="leagues" element={<AdminLeaguesPage />} />
         <Route path="cards" element={<AdminCardsPage />} />
         <Route path="config" element={<AdminConfigPage />} />
-        <Route path="players" element={<AdminPlayersPage />} />
       </Route>
 
       {/* 404 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+
+    {/* DEBUG-ONLY: REMOVE FOR PROD */}
+    <DebugDraftPanel />
+    </>
   );
 }

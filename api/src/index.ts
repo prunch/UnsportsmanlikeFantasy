@@ -11,9 +11,10 @@ import { errorHandler } from './middleware/errorHandler';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
 import leaguesRouter from './routes/leagues';
-import playersRouter from './routes/players';
 import adminRouter from './routes/admin';
+import cardsRouter from './routes/cards';
 import healthRouter from './routes/health';
+import debugRouter from './routes/debug'; // DEBUG-ONLY: REMOVE FOR PROD
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -66,8 +67,14 @@ app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/leagues', leaguesRouter);
-app.use('/api/players', playersRouter);
+app.use('/api', cardsRouter);
 app.use('/api/admin', adminRouter);
+
+// DEBUG-ONLY: REMOVE FOR PROD
+if (process.env.DEBUG_DRAFT === 'true') {
+  app.use('/api/debug', debugRouter);
+  logger.info('🐛 Debug draft routes enabled at /api/debug');
+}
 
 // ── Error handling ─────────────────────────────────────────────────────────────
 app.use(errorHandler);

@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  gridiron-api:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./api:/app
+      - ./.env:/app/.env
+    command: node dist/index.js
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    networks:
+      - openclaw-zsbx_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gridiron-api.rule=Host(`srv1561102.hstgr.cloud`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.gridiron-api.entrypoints=web"
+      - "traefik.http.services.gridiron-api.loadbalancer.server.port=3000"
+      - "traefik.http.routers.gridiron-api.service=gridiron-api"
+
+  gridiron-frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./src/dist:/app
+    command: npx serve -s . -l 3000
+    networks:
+      - openclaw-zsbx_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gridiron-frontend.rule=Host(`srv1561102.hstgr.cloud`) && PathPrefix(`/fantasy`)"
+      - "traefik.http.routers.gridiron-frontend.entrypoints=web"
+      - "traefik.http.services.gridiron-frontend.loadbalancer.server.port=3000"
+      - "traefik.http.routers.gridiron-frontend.service=gridiron-frontend"
+
+networks:
+  openclaw-zsbx_default:
+    external: true

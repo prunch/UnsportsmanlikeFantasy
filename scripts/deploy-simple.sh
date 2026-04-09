@@ -1,23 +1,12 @@
 #!/bin/bash
-# Deploy script for Gridiron Cards Fantasy Football App
+# Simple deploy script for Gridiron Cards - No Docker needed
 # Run this on your VPS as root
 
 set -e
 
-echo "🚀 Deploying Gridiron Cards to port 4000..."
+echo "🚀 Deploying Gridiron Cards (simple mode)..."
 
-# Check if Node.js is installed, if not install it
-if ! command -v node &> /dev/null; then
-    echo "📦 Installing Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y nodejs
-fi
-
-# Check if npm is installed
-if ! command -v npm &> /dev/null; then
-    echo "❌ npm not found after Node.js install. Trying alternative..."
-    apt-get update && apt-get install -y npm
-fi
+cd /opt/gridiron-cards
 
 echo "📦 Setting up environment..."
 cat > .env << 'ENVFILE'
@@ -48,11 +37,6 @@ VITE_SUPABASE_URL=https://dwtvqphgeuxvzueiaurl.supabase.co
 VITE_SUPABASE_ANON_KEY=sb_publishable_7K0k2iJ-j9ILyFvt5XKpWw_fVgCxcwp
 ENVFILE
 
-echo "🗄️ Running database migrations..."
-echo "⚠️  You'll need to run these SQL files in Supabase SQL Editor:"
-echo "   1. db/migrations/001_initial_schema.sql"
-echo "   2. db/migrations/002_rls_policies.sql"
-
 echo "🔧 Building frontend..."
 cd src
 npm install
@@ -65,9 +49,24 @@ npm install
 npm run build
 cd ..
 
-echo "🐳 Starting services with Docker..."
-docker-compose down 2>/dev/null || true
-docker-compose up -d
+echo "📦 Installing PM2 (process manager)..."
+npm install -g pm2
+
+echo "🚀 Starting API server with PM2..."
+cd api
+pm2 delete gridiron-api 2>/dev/null || true
+pm2 start dist/index.js --name gridiron-api --env production
+cd ..
+
+echo "🚀 Starting frontend server with PM2..."
+cd src/dist
+pm2 delete gridiron-frontend 2>/dev/null || true
+pm2 start npx --name gridiron-frontend -- serve -s . -l 3001
+cd ../..
+
+echo "💾 Saving PM2 config..."
+pm2 save
+pm2 startup
 
 echo "⚙️ Configuring nginx..."
 cp docker/nginx.conf /etc/nginx/sites-available/gridiron-cards
@@ -80,3 +79,6 @@ echo ""
 echo "⚠️  IMPORTANT: Run the SQL migrations in Supabase first!"
 echo "⚠️  After first signup, run this SQL to make yourself admin:"
 echo "   UPDATE users SET role = 'admin' WHERE email = 'your@email.com';"
+echo ""
+echo "📊 Check status with: pm2 status"
+echo "📜 View logs with: pm2 logs"

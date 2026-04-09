@@ -1,11 +1,10 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Users, Trophy, CreditCard, Settings, BarChart2, ArrowLeft, Database } from 'lucide-react';
+import { Users, Trophy, CreditCard, Settings, BarChart2, ArrowLeft } from 'lucide-react';
 
 const navItems = [
   { path: '/admin/users', label: 'Users', icon: <Users size={18} /> },
   { path: '/admin/leagues', label: 'Leagues', icon: <Trophy size={18} /> },
   { path: '/admin/cards', label: 'Card Manager', icon: <CreditCard size={18} /> },
-  { path: '/admin/players', label: 'Players', icon: <Database size={18} /> },
   { path: '/admin/config', label: 'API Config', icon: <Settings size={18} /> }
 ];
 

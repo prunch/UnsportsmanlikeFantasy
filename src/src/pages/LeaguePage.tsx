@@ -3,10 +3,12 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { apiGet, apiPost } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Users, ClipboardList, Zap, TrendingUp, Copy } from 'lucide-react';
+import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers } from 'lucide-react';
 import RosterPage from './league/RosterPage';
 import DraftRoomPage from './league/DraftRoomPage';
 import WaiverWirePage from './league/WaiverWirePage';
+import CardDeckPage from './CardDeckPage';
+import CardPickPage from './CardPickPage';
 
 export interface League {
   id: string;
@@ -44,6 +46,9 @@ function LeagueNav({ leagueId, status }: { leagueId: string; status: string }) {
     ...(status === 'draft' ? [{ to: `${base}/draft`, label: 'Draft Room', icon: <Zap size={16} /> }] : []),
     ...(status === 'active' || status === 'playoffs'
       ? [{ to: `${base}/waivers`, label: 'Waiver Wire', icon: <TrendingUp size={16} /> }]
+      : []),
+    ...(status === 'active' || status === 'playoffs'
+      ? [{ to: `${base}/cards`, label: 'Cards', icon: <Layers size={16} /> }]
       : [])
   ];
 
@@ -306,6 +311,26 @@ export default function LeaguePage() {
           element={
             league.status === 'active' || league.status === 'playoffs' ? (
               <WaiverWirePage league={league} />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
+        <Route
+          path="cards"
+          element={
+            league.status === 'active' || league.status === 'playoffs' ? (
+              <CardDeckPage />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
+        <Route
+          path="cards/pick"
+          element={
+            league.status === 'active' || league.status === 'playoffs' ? (
+              <CardPickPage />
             ) : (
               <Navigate to={`/leagues/${id}`} replace />
             )

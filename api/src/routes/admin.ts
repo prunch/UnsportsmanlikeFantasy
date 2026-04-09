@@ -191,6 +191,25 @@ router.patch('/cards/:id', async (req: AuthRequest, res: Response, next: NextFun
   }
 });
 
+// ── PUT /api/admin/cards/:id (full replace) ─────────────────────────────────
+router.put('/cards/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const body = cardSchema.parse(req.body);
+    const { data, error } = await supabaseAdmin
+      .from('cards')
+      .update(body)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw new AppError('Failed to update card', 500);
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── DELETE /api/admin/cards/:id ───────────────────────────────────────────────
 router.delete('/cards/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   const { id } = req.params;
