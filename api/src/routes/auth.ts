@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import jwt from 'jsonwebtoken';
-import { supabaseAdmin } from '../utils/supabase';
+import { supabaseAdmin, supabase } from '../utils/supabase';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 
@@ -89,8 +89,11 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
   try {
     const body = loginSchema.parse(req.body);
 
-    logger.debug('[auth] /login — calling supabase auth.signInWithPassword', { email: body.email });
-    const { data: authData, error: authError } = await supabaseAdmin.auth.signInWithPassword({
+    // Use the PUBLIC client for signInWithPassword — using supabaseAdmin here
+    // causes it to cache a user session on the shared admin client, which then
+    // pollutes subsequent DB queries (they run as the user instead of service_role).
+    logger.debug('[auth] /login — calling supabase.auth.signInWithPassword', { email: body.email });
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: body.email,
       password: body.password
     });
@@ -144,8 +147,9 @@ router.post('/refresh', async (req: Request, res: Response, next: NextFunction) 
     const { refreshToken } = req.body;
     if (!refreshToken) throw new AppError('Refresh token required', 400);
 
-    logger.debug('[auth] /refresh — calling supabase auth.refreshSession');
-    const { data, error } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken });
+    // Use public client for session refresh (same reason as login — avoid polluting admin client)
+    logger.debug('[auth] /refresh — calling supabase.auth.refreshSession');
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
 
     if (error || !data.user) {
       logger.warn('[auth] /refresh — invalid refresh token', { error: error?.message });
