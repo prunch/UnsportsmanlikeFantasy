@@ -7,23 +7,36 @@ import { logger } from '../utils/logger';
 const router = Router();
 
 // ── GET /api/players ──────────────────────────────────────────────────────────
+// Query params:
+//   limit     — page size, max 200, default 50
+//   offset    — pagination offset
+//   position  — QB/RB/WR/TE/K/DEF or ALL
+//   q         — case-insensitive name search
+//   sortBy    — "adp" (default) | "value_rank"
+//   rankedOnly — "true" filters to rows with a non-null value_rank
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   const limit = Math.min(parseInt(String(req.query.limit || '50'), 10), 200);
   const offset = parseInt(String(req.query.offset || '0'), 10);
   const position = req.query.position as string | undefined;
   const q = req.query.q as string | undefined;
+  const sortBy = (req.query.sortBy as string | undefined) === 'value_rank' ? 'value_rank' : 'adp';
+  const rankedOnly = req.query.rankedOnly === 'true';
 
-  logger.info('[players] GET / — list', { limit, offset, position, q });
+  logger.info('[players] GET / — list', { limit, offset, position, q, sortBy, rankedOnly });
   try {
     let query = supabaseAdmin
       .from('players')
-      .select('id, name, position, nfl_team, status, adp, headshot_url, updated_at', { count: 'exact' })
-      .order('adp', { ascending: true, nullsFirst: false })
+      .select(
+        'id, name, position, nfl_team, status, adp, value_rank, headshot_url, updated_at',
+        { count: 'exact' }
+      )
+      .order(sortBy, { ascending: true, nullsFirst: false })
       .order('name', { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (position && position !== 'ALL') query = query.eq('position', position);
     if (q) query = query.ilike('name', `%${q}%`);
+    if (rankedOnly) query = query.not('value_rank', 'is', null);
 
     const { data, error, count } = await query;
 

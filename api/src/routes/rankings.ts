@@ -227,14 +227,28 @@ router.post(
     // clear existing ranks first, then write the new set.
     // Wrapped in sequential awaits (not Promise.all) to avoid Supabase rate limits.
 
-    // Clear all existing value_rank values
+    // Clear all existing value_rank values.
+    //
+    // PostgREST requires every UPDATE to carry a WHERE clause, so we pass
+    // a filter that always matches every row: "id ≠ <impossible UUID>".
+    // This is the canonical Supabase JS idiom for "update every row" and
+    // sidesteps quirks with `is null` filter parsing we've hit before.
+    const IMPOSSIBLE_UUID = '00000000-0000-0000-0000-000000000000';
     const { error: clearErr } = await supabaseAdmin
       .from('players')
       .update({ value_rank: null })
-      .not('value_rank', 'is', null); // only touch rows that have a value
+      .neq('id', IMPOSSIBLE_UUID);
 
     if (clearErr) {
-      res.status(500).json({ error: 'Failed to clear existing rankings', detail: clearErr.message });
+      // Log the full error object to Render logs so we can diagnose
+      // issues like missing columns, RLS blocking, or bad service key.
+      console.error('[rankings/import] clear step failed:', clearErr);
+      res.status(500).json({
+        error: 'Failed to clear existing rankings',
+        detail: clearErr.message,
+        code: clearErr.code,
+        hint: clearErr.hint,
+      });
       return;
     }
 
