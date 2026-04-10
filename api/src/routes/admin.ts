@@ -95,6 +95,18 @@ const cardSchema = z.object({
   is_active: z.boolean().default(true)
 });
 
+// Format a Supabase PostgrestError into a single diagnostic string for the
+// AppError message + log the structured error so we can see code/hint/details
+// in Render logs when something goes wrong on /admin/cards.
+function describeDbError(prefix: string, err: { message?: string; code?: string; hint?: string; details?: string } | null): string {
+  if (!err) return prefix;
+  console.error(`[admin/cards] ${prefix}`, err);
+  const parts = [err.message];
+  if (err.code) parts.push(`code=${err.code}`);
+  if (err.hint) parts.push(`hint=${err.hint}`);
+  return `${prefix}: ${parts.filter(Boolean).join(' | ')}`;
+}
+
 // GET /api/admin/cards
 router.get('/cards', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -103,7 +115,7 @@ router.get('/cards', async (req: AuthRequest, res: Response, next: NextFunction)
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) throw new AppError('Failed to fetch cards', 500);
+    if (error) throw new AppError(describeDbError('Failed to fetch cards', error), 500);
     res.json(data || []);
   } catch (err) {
     next(err);
@@ -120,7 +132,7 @@ router.post('/cards', async (req: AuthRequest, res: Response, next: NextFunction
       .select()
       .single();
 
-    if (error) throw new AppError(`Failed to create card: ${error.message}`, 500);
+    if (error) throw new AppError(describeDbError('Failed to create card', error), 500);
     res.status(201).json(data);
   } catch (err) {
     next(err);
@@ -139,7 +151,7 @@ router.patch('/cards/:id', async (req: AuthRequest, res: Response, next: NextFun
       .select()
       .single();
 
-    if (error) throw new AppError('Failed to update card', 500);
+    if (error) throw new AppError(describeDbError('Failed to update card', error), 500);
     res.json(data);
   } catch (err) {
     next(err);
@@ -158,7 +170,7 @@ router.put('/cards/:id', async (req: AuthRequest, res: Response, next: NextFunct
       .select()
       .single();
 
-    if (error) throw new AppError('Failed to update card', 500);
+    if (error) throw new AppError(describeDbError('Failed to update card', error), 500);
     res.json(data);
   } catch (err) {
     next(err);
@@ -170,7 +182,7 @@ router.delete('/cards/:id', async (req: AuthRequest, res: Response, next: NextFu
   try {
     const { id } = req.params;
     const { error } = await supabaseAdmin.from('cards').delete().eq('id', id);
-    if (error) throw new AppError('Failed to delete card', 500);
+    if (error) throw new AppError(describeDbError('Failed to delete card', error), 500);
     res.json({ success: true });
   } catch (err) {
     next(err);

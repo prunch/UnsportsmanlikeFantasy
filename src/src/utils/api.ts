@@ -21,14 +21,21 @@ export async function apiFetch<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    // Surface Zod validation field errors if present
+    // Surface Zod validation field errors if present (array of {path, message})
     if (error.details && Array.isArray(error.details) && error.details.length > 0) {
       const fieldErrors = error.details
         .map((d: { path: string; message: string }) => `${d.path}: ${d.message}`)
         .join('; ');
       throw new Error(fieldErrors);
     }
-    throw new Error(error.error || `HTTP ${response.status}`);
+    // Build a diagnostic string from whatever fields the backend surfaced.
+    // Some routes (e.g. admin rankings import) return separate detail/hint
+    // fields; prefer concatenating them so toasts show the real DB error
+    // instead of a generic "Failed to X".
+    const parts = [error.error || `HTTP ${response.status}`];
+    if (typeof error.detail === 'string' && error.detail) parts.push(error.detail);
+    if (typeof error.hint === 'string' && error.hint) parts.push(`hint: ${error.hint}`);
+    throw new Error(parts.join(' — '));
   }
 
   return response.json();

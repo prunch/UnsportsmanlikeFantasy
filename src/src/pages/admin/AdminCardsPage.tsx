@@ -42,8 +42,10 @@ export default function AdminCardsPage() {
     try {
       const data = await apiGet<Card[]>('/admin/cards', token || undefined);
       setCards(data);
-    } catch {
-      toast.error('Failed to load cards');
+    } catch (err) {
+      // Surface the backend's real message (now includes Postgres code/hint
+      // when the failure is DB-level, e.g. "permission denied for table cards")
+      toast.error(err instanceof Error ? `Failed to load cards — ${err.message}` : 'Failed to load cards');
     } finally {
       setLoading(false);
     }
@@ -267,24 +269,42 @@ function CardForm({ card, onSave, onCancel }: { card: Card; onSave: (c: Card) =>
             {errors.description && <p className="text-red-400 text-xs mt-1">{errors.description}</p>}
           </div>
           <div>
-            <label className="label">Target Type</label>
+            <label className="label">Who does this card affect?</label>
             <select name="target_type" className="input" value={form.target_type} onChange={handleChange}>
-              <option value="position">Position</option>
-              <option value="player">Player</option>
-              <option value="all">All</option>
+              <option value="position">All players at a position (e.g. all WRs)</option>
+              <option value="player">A single player</option>
+              <option value="all">Everyone on a team</option>
             </select>
+            <p className="text-slate-500 text-xs mt-1">
+              {form.target_type === 'position' &&
+                'Buff/debuff applies to every player at the chosen position.'}
+              {form.target_type === 'player' &&
+                'The user picks one specific player when they play this card. You can optionally restrict which position that player must be.'}
+              {form.target_type === 'all' &&
+                'Applies to every player on the targeted team regardless of position.'}
+            </p>
           </div>
-          {form.target_type === 'position' && (
+          {(form.target_type === 'position' || form.target_type === 'player') && (
             <div>
-              <label className="label">Target Position</label>
-              <select name="target_position" className="input" value={form.target_position || ''} onChange={handleChange}>
+              <label className="label">
+                {form.target_type === 'position' ? 'Position' : 'Restrict to position (optional)'}
+              </label>
+              <select
+                name="target_position"
+                className="input"
+                value={form.target_position || ''}
+                onChange={handleChange}
+              >
+                {form.target_type === 'player' && (
+                  <option value="">Any position</option>
+                )}
                 <option value="QB">QB</option>
                 <option value="RB">RB</option>
                 <option value="WR">WR</option>
                 <option value="TE">TE</option>
                 <option value="K">K</option>
                 <option value="DEF">DEF</option>
-                <option value="All">All</option>
+                {form.target_type === 'position' && <option value="All">All positions</option>}
               </select>
             </div>
           )}
