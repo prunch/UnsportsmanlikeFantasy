@@ -22,10 +22,13 @@ export default function DashboardPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Don't attempt fetch until we have a token (wait for store hydration)
+    if (!token) return;
+
     async function fetchLeagues() {
       setFetchError(null);
       try {
-        const data = await apiGet<League[]>('/leagues', token || undefined);
+        const data = await apiGet<League[]>('/leagues', token!);
         setLeagues(data);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to load leagues';
