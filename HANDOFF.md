@@ -1,8 +1,8 @@
 # Gridiron Cards — Cowork Handoff (paused mid-audit)
 
-**Last updated:** April 10, 2026
+**Last updated:** April 10, 2026 (audit completed)
 **Previous handoff chain:** OpenClaw ("Viper") → Cowork (Claude Opus 4.6)
-**Status:** League-loading bug fixed, password reset, SPA-404 fix written but not pushed, security audit paused mid-way. Safe to resume on any machine.
+**Status:** League-loading bug fixed, password reset, SPA 404 fix deployed, 5-task security audit complete. Three pending decisions for Frank captured in `AUDIT_2026-04-10.md`. Safe to resume on any machine.
 
 ---
 
@@ -71,7 +71,7 @@ WHERE email = 'frank.higgins@gmail.com';
 
 New password is in Frank's password manager. Not recorded here.
 
-### 3. SPA refresh-404 — FIX WRITTEN, NOT PUSHED ⚠️
+### 3. SPA refresh-404 — FIXED & DEPLOYED ✓
 
 Refreshing `https://gridiron-frontend-jbfv.onrender.com/dashboard` returned 404 because Render's static host has no knowledge of React Router client-side routes.
 
@@ -81,49 +81,54 @@ Refreshing `https://gridiron-frontend-jbfv.onrender.com/dashboard` returned 404 
 /*    /index.html   200
 ```
 
-Vite copies `src/public/` → `dist/` on build, and Render honors `_redirects` files in the served directory. This turns all unknown routes into a 200 serving `index.html`, letting React Router take over.
+Vite copies `src/public/` → `dist/` on build, and Render honors `_redirects` files in the served directory. All unknown routes now return 200 with `index.html`, letting React Router take over.
 
-**Status:** File exists locally. **Not committed, not pushed, not deployed.** Needs to ship before the fix is live.
+**Status:** Committed, pushed, deployed via Render auto-deploy.
+
+### 4. Duplicate chat_messages RLS policies — FIXED ✓
+
+Migration `002_rls_policies.sql` and `008_phase4_polish.sql` created two pairs of semantically identical policies on `chat_messages`. Verified equivalence by reading `is_league_member()`'s definition — the inline subquery in the 008 policies matched the helper function exactly.
+
+**Fix:** Migration `012_cleanup_duplicate_chat_policies.sql` drops the duplicates. Applied via Supabase MCP as migration `cleanup_duplicate_chat_policies`. Verified — `chat_messages` now has exactly `chat_select_member` and `chat_insert_member`.
 
 ---
 
-## Uncommitted changes to commit & push before switching machines
+## Uncommitted changes (as of this handoff update)
 
 ```
-src/public/_redirects                                # SPA 404 fix
-.claude/skills/simplify/SKILL.md                     # installed this session
-.claude/skills/frontend-design/SKILL.md              # installed this session
-HANDOFF.md                                           # this file
+db/migrations/012_cleanup_duplicate_chat_policies.sql      # applied, file for VC
+db/migrations/013_enable_rls_on_card_tables.sql            # DRAFT, not applied
+AUDIT_2026-04-10.md                                        # consolidated report
+HANDOFF.md                                                 # this file
 ```
 
 Suggested commit:
 
 ```bash
-git add src/public/_redirects .claude/skills HANDOFF.md
-git commit -m "Add SPA redirect fix, install simplify/frontend-design skills, add handoff doc"
+git add db/migrations/012_cleanup_duplicate_chat_policies.sql \
+        db/migrations/013_enable_rls_on_card_tables.sql \
+        AUDIT_2026-04-10.md HANDOFF.md
+git commit -m "Complete 5-task security audit; add migrations 012 (applied) and 013 (draft)"
 git push
 ```
 
 ---
 
-## Pending work — the 5-task audit (paused mid-way)
+## Audit status — COMPLETE
 
-Frank asked for 5 audit tasks. Three are complete, two remain, plus a final consolidated report.
+All five tasks finished. See `AUDIT_2026-04-10.md` at repo root for the full consolidated report with findings, recommendations, and pending decisions.
 
-### Completed ✓
+### Applied to the database
+- Migration `20260410182541_fix_missing_table_grants_for_supabase_roles` — the real league-bug fix (grants, not RLS).
+- Migration `cleanup_duplicate_chat_policies` — drops the 008 duplicates on `chat_messages`. Verified.
 
-1. **Read project docs** — STATUS.md, SPEC.md, BUILD_LOG.md, PHASE4_NOTES.md, CARD_SYSTEM.md, PROJECT_INDEX.md. Context established.
-2. **Audit committed `.env`** — file IS committed but every `SUPABASE_*` value is `placeholder-*`. One real-ish value: `JWT_SECRET=dev-secret-change-in-production`. Render overrides everything at deploy time so no production secret is actually leaked. Still worth tightening (see pending decisions).
-3. **Run Supabase advisors** — findings below.
-4. **Code-level security review** — verified the "frontend never touches Supabase" fact above, which simplifies the pending RLS work considerably.
-
-### Pending
-
-1. **Clean up duplicate `chat_messages` RLS policies.** Migration `002_rls_policies.sql` created `chat_select_member` and `chat_insert_member`. Migration `008_phase4_polish.sql` then created duplicate `chat_messages_select` and `chat_messages_insert` doing the same thing. Need a cleanup migration that DROPs the duplicates (probably the 008 versions, since they're the later addition).
-
-2. **Write RLS-on migration draft for card tables** (Frank reviews before applying). Tables: `cards`, `played_cards`, `user_cards`, `switcheroo_log`, `user_switcheroo`, `weekly_card_picks`. All currently have RLS disabled — the advisors flag this as an ERROR for the three tables with orphaned policies. Recommended posture based on verified architecture: enable RLS, create NO policies for `authenticated`/`anon` (locks them out of direct REST access entirely), `service_role` continues to bypass and serves all app traffic via the backend. Frank needs to sign off before applying.
-
-3. **Deliver consolidated findings report** — one clean message summarizing all 5 audit tasks, advisor output, and recommendations. Not yet written.
+### Awaiting your decision (non-urgent)
+1. **Apply `db/migrations/013_enable_rls_on_card_tables.sql`?** Drops four orphaned policies and enables RLS on the six card tables as defense in depth. Verified zero functional risk. Read the file, then tell me apply/modify/discard.
+2. **`.env` handling** — leave committed with placeholders, or move to `.env.example` + gitignore?
+3. **`public.users.users_insert` policy** with `WITH CHECK (true)` — intentional for signup flow, or tighten to `id = auth.uid()`?
+4. **Small follow-ups (no review needed if you say yes):**
+   - `ALTER FUNCTION public.update_updated_at() SET search_path = public, pg_temp;` (advisor warn)
+   - Enable HaveIBeenPwned in Supabase dashboard → Auth → Providers
 
 ---
 
@@ -151,8 +156,9 @@ Performance advisors were also run; findings were minor and non-blocking.
 
 1. `20260410181040_fix_circular_rls_and_missing_cards_policy` — **previous agent (Viper).** Added `SECURITY DEFINER` to `is_league_member()`, added `cards` policies. Harmless but not the actual fix.
 2. `20260410182541_fix_missing_table_grants_for_supabase_roles` — **this session.** The real fix for the league-loading bug. Grants table privileges to `authenticated`/`anon`/`service_role` and sets default privileges.
+3. `cleanup_duplicate_chat_policies` — **this session.** Drops `chat_messages_select` and `chat_messages_insert` (duplicates of `chat_select_member`/`chat_insert_member`). Corresponds to `db/migrations/012_cleanup_duplicate_chat_policies.sql`.
 
-Both are in `db/migrations/` once you export them, or visible via `mcp__supabase__list_migrations` with project ref `dwtvqphgeuxvzueiaurl`.
+Visible via `mcp__supabase__list_migrations` with project ref `dwtvqphgeuxvzueiaurl`.
 
 ---
 
