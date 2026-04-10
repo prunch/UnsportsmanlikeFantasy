@@ -25,6 +25,12 @@ import debugRouter from './routes/debug'; // DEBUG-ONLY: REMOVE FOR PROD
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
+// Render sits behind a load balancer, so the client IP arrives in the
+// X-Forwarded-For header. Trust exactly one proxy hop so express-rate-limit
+// keys off the real client IP instead of throwing
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every request.
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 app.use(cors({
