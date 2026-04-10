@@ -34,10 +34,16 @@ const upload = multer({
     files: 1,
   },
   fileFilter: (_req, file, cb) => {
+    // Accept any file ending in .csv regardless of MIME type.
+    // Browsers and operating systems report CSV MIME types inconsistently:
+    // macOS → text/csv, Windows → application/vnd.ms-excel or text/plain,
+    // some browsers → application/octet-stream.
     if (
+      file.originalname.toLowerCase().endsWith('.csv') ||
       file.mimetype === 'text/csv' ||
+      file.mimetype === 'text/plain' ||
       file.mimetype === 'application/vnd.ms-excel' ||
-      file.originalname.endsWith('.csv')
+      file.mimetype === 'application/octet-stream'
     ) {
       cb(null, true);
     } else {

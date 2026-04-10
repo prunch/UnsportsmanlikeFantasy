@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { apiGet } from '../utils/api';
-import { Plus, Users, Trophy } from 'lucide-react';
+import { Plus, Users, Trophy, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface League {
@@ -19,14 +19,18 @@ export default function DashboardPage() {
   const { user, token } = useAuthStore();
   const [leagues, setLeagues] = useState<League[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchLeagues() {
+      setFetchError(null);
       try {
         const data = await apiGet<League[]>('/leagues', token || undefined);
         setLeagues(data);
       } catch (err) {
-        // Supabase not configured yet — show empty state
+        const msg = err instanceof Error ? err.message : 'Failed to load leagues';
+        setFetchError(msg);
+        toast.error(`Could not load your leagues: ${msg}`);
         setLeagues([]);
       } finally {
         setLoading(false);
@@ -54,6 +58,17 @@ export default function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* Error banner */}
+      {fetchError && !loading && (
+        <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6 text-red-400">
+          <AlertCircle size={20} className="shrink-0" />
+          <div>
+            <p className="font-semibold text-sm">Failed to load leagues</p>
+            <p className="text-xs text-red-300 mt-0.5">{fetchError}</p>
+          </div>
+        </div>
+      )}
 
       {/* League grid */}
       {loading ? (
