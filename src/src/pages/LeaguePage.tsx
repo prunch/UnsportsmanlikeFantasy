@@ -3,10 +3,11 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { apiGet, apiPost } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers, MessageCircle, Trophy, Shield } from 'lucide-react';
+import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers, MessageCircle, Trophy, Shield, ListOrdered } from 'lucide-react';
 import RosterPage from './league/RosterPage';
 import DraftRoomPage from './league/DraftRoomPage';
 import WaiverWirePage from './league/WaiverWirePage';
+import PlayersPage from './league/PlayersPage';
 import CardDeckPage from './CardDeckPage';
 import CardPickPage from './CardPickPage';
 import ChatPage from './league/ChatPage';
@@ -46,6 +47,11 @@ function LeagueNav({ leagueId, status, isCommissioner }: { leagueId: string; sta
   const tabs = [
     { to: base, label: 'Overview', icon: <Users size={16} /> },
     { to: `${base}/roster`, label: 'My Roster', icon: <ClipboardList size={16} /> },
+    // Players tab is available pre-draft (setup) and during the draft, so users
+    // can tune their autodraft rankings before the clock starts
+    ...(status === 'setup' || status === 'draft'
+      ? [{ to: `${base}/players`, label: 'Players', icon: <ListOrdered size={16} /> }]
+      : []),
     ...(status === 'draft' ? [{ to: `${base}/draft`, label: 'Draft Room', icon: <Zap size={16} /> }] : []),
     ...(status === 'active' || status === 'playoffs'
       ? [{ to: `${base}/waivers`, label: 'Waiver Wire', icon: <TrendingUp size={16} /> }]
@@ -306,6 +312,16 @@ export default function LeaguePage() {
           }
         />
         <Route path="roster" element={<RosterPage league={league} />} />
+        <Route
+          path="players"
+          element={
+            league.status === 'setup' || league.status === 'draft' ? (
+              <PlayersPage league={league} />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
         <Route
           path="draft"
           element={

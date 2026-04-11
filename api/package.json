@@ -7,7 +7,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "sync:players": "ts-node --transpile-only src/scripts/syncPlayers.ts",
+    "sync:stats": "ts-node --transpile-only src/scripts/syncPlayerStats.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

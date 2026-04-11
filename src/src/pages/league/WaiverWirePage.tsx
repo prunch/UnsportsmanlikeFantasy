@@ -1,9 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { apiGet, apiPost, apiDelete } from '../../utils/api';
 import toast from 'react-hot-toast';
 import type { League } from '../LeaguePage';
-import { Search, Plus, X, Clock } from 'lucide-react';
+import { Plus, X, Clock } from 'lucide-react';
+import PlayerGrid, {
+  GridPlayer,
+  PLAYER_GRID_COLUMNS,
+  ColumnDef,
+  FetchResult,
+} from '../../components/PlayerGrid';
 
 interface Player {
   id: string;
@@ -49,28 +55,36 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: 'bg-slate-500/10 text-slate-400 border-slate-500/30'
 };
 
+// Columns for the free-agents grid. Season stats/projections are shown when
+// available (currently only when the backend /leagues/:id/free-agents endpoint
+// is extended to return them — see the fetcher comment). For now they'll show
+// dashes gracefully.
+const waiverGridColumns: ColumnDef[] = [
+  PLAYER_GRID_COLUMNS.name,
+  PLAYER_GRID_COLUMNS.adp,
+  PLAYER_GRID_COLUMNS.proj_ppr,
+  PLAYER_GRID_COLUMNS.last_ppr,
+  PLAYER_GRID_COLUMNS.bye,
+];
+
 export default function WaiverWirePage({ league }: { league: League }) {
   const { token, user } = useAuthStore();
   const [tab, setTab] = useState<'available' | 'claims'>('available');
-  const [freeAgents, setFreeAgents] = useState<Player[]>([]);
   const [waiverClaims, setWaiverClaims] = useState<WaiverClaim[]>([]);
   const [myRoster, setMyRoster] = useState<RosterEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [posFilter, setPosFilter] = useState('ALL');
   const [claimModal, setClaimModal] = useState<Player | null>(null);
   const [dropPlayerId, setDropPlayerId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [gridRefresh, setGridRefresh] = useState(0);
 
   async function loadAll() {
     if (!token) return;
     try {
-      const [agents, claims, roster] = await Promise.all([
-        apiGet<Player[]>(`/leagues/${league.id}/free-agents`, token),
+      const [claims, roster] = await Promise.all([
         apiGet<WaiverClaim[]>(`/leagues/${league.id}/waivers`, token),
         apiGet<RosterEntry[]>(`/leagues/${league.id}/roster/mine`, token)
       ]);
-      setFreeAgents(agents);
       setWaiverClaims(claims);
       setMyRoster(roster);
     } catch (err) {
@@ -84,25 +98,35 @@ export default function WaiverWirePage({ league }: { league: League }) {
     loadAll();
   }, [league.id, token]);
 
-  async function loadFreeAgents() {
-    if (!token) return;
-    try {
+  // ── Fetcher for the shared PlayerGrid ──
+  // We hit the existing /leagues/:id/free-agents endpoint which already filters
+  // rostered players out. The endpoint currently returns a plain array, not a
+  // {players,total} envelope, so we adapt it here.
+  const freeAgentsFetcher = useCallback(
+    async ({ search, position }: { search: string; position: string }): Promise<FetchResult> => {
+      if (!token) return { players: [], total: 0 };
       const params = new URLSearchParams();
       if (search) params.set('search', search);
-      if (posFilter !== 'ALL') params.set('position', posFilter);
+      if (position !== 'ALL') params.set('position', position);
       const data = await apiGet<Player[]>(
         `/leagues/${league.id}/free-agents?${params.toString()}`,
         token
       );
-      setFreeAgents(data);
-    } catch {
-      // silently fail
-    }
-  }
-
-  useEffect(() => {
-    loadFreeAgents();
-  }, [search, posFilter]);
+      // The free-agents endpoint doesn't join stats yet (it lives under
+      // /leagues, not /players) — the grid will just show dashes for stat
+      // columns until we extend it. Name/position/team/ADP/status render fine.
+      const players: GridPlayer[] = data.map((p) => ({
+        id: p.id,
+        name: p.name,
+        position: p.position,
+        nfl_team: p.nfl_team,
+        status: p.status,
+        adp: p.adp ?? null,
+      }));
+      return { players, total: players.length };
+    },
+    [league.id, token]
+  );
 
   async function handleSubmitClaim() {
     if (!token || !claimModal) return;
@@ -116,6 +140,7 @@ export default function WaiverWirePage({ league }: { league: League }) {
       setClaimModal(null);
       setDropPlayerId('');
       await loadAll();
+      setGridRefresh((k) => k + 1);
       setTab('claims');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to submit claim');
@@ -178,69 +203,32 @@ export default function WaiverWirePage({ league }: { league: League }) {
       </div>
 
       {tab === 'available' && (
-        <>
-          {/* Search + Filter */}
-          <div className="flex gap-3">
-            <div className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search free agents..."
-                className="input pl-9 w-full"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-            <div className="flex gap-1">
-              {['ALL', 'QB', 'RB', 'WR', 'TE', 'K', 'DEF'].map(pos => (
-                <button
-                  key={pos}
-                  onClick={() => setPosFilter(pos)}
-                  className={`px-3 py-2 text-xs font-bold rounded-lg transition-colors ${
-                    posFilter === pos
-                      ? 'bg-gridiron-gold text-slate-900'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {pos}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="card p-0 overflow-hidden">
-            <div className="divide-y divide-slate-700">
-              {freeAgents.length === 0 ? (
-                <div className="py-10 text-center text-slate-500">No free agents found</div>
-              ) : (
-                freeAgents.map(player => (
-                  <div key={player.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-750">
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${POSITION_COLORS[player.position] || ''}`}>
-                      {player.position}
-                    </span>
-                    <div className="flex-1">
-                      <div className="text-white font-medium text-sm">{player.name}</div>
-                      <div className="text-slate-400 text-xs">
-                        {player.nfl_team}
-                        {player.status !== 'active' && (
-                          <span className="ml-2 text-red-400 font-semibold uppercase">{player.status}</span>
-                        )}
-                      </div>
-                    </div>
-                    {player.adp && <div className="text-slate-500 text-xs">ADP {player.adp}</div>}
-                    <button
-                      onClick={() => { setClaimModal(player); setDropPlayerId(''); }}
-                      className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1"
-                    >
-                      <Plus size={14} />
-                      Claim
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </>
+        <PlayerGrid
+          fetcher={freeAgentsFetcher}
+          columns={waiverGridColumns}
+          initialSort={{ key: 'adp', dir: 'asc' }}
+          pageSize={100}
+          refreshKey={gridRefresh}
+          rowAction={(p) => (
+            <button
+              onClick={() => {
+                setClaimModal({
+                  id: p.id,
+                  name: p.name,
+                  position: p.position,
+                  nfl_team: p.nfl_team,
+                  status: p.status,
+                  adp: p.adp ?? undefined,
+                });
+                setDropPlayerId('');
+              }}
+              className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1"
+            >
+              <Plus size={14} />
+              Claim
+            </button>
+          )}
+        />
       )}
 
       {tab === 'claims' && (

@@ -20,6 +20,7 @@ import scoreboardRouter from './routes/scoreboard';
 import commissionerRouter from './routes/commissioner';
 import healthRouter from './routes/health';
 import playersRouter from './routes/players';
+import userRankingsRouter from './routes/userRankings';
 import debugRouter from './routes/debug'; // DEBUG-ONLY: REMOVE FOR PROD
 
 const app = express();
@@ -67,6 +68,7 @@ app.use('/api', cardsRouter);
 app.use('/api/leagues', chatRouter);
 app.use('/api/leagues', scoreboardRouter);
 app.use('/api/leagues', commissionerRouter);
+app.use('/api/leagues', userRankingsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/players', playersRouter);
 app.use('/api/admin', adminRouter);

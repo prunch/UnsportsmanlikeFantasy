@@ -8,28 +8,48 @@ const router = Router();
 
 // ── GET /api/players ──────────────────────────────────────────────────────────
 // Query params:
-//   limit     — page size, max 200, default 50
+//   limit     — page size, max 500, default 50
 //   offset    — pagination offset
 //   position  — QB/RB/WR/TE/K/DEF or ALL
 //   q         — case-insensitive name search
 //   sortBy    — "adp" (default) | "value_rank"
 //   rankedOnly — "true" filters to rows with a non-null value_rank
+//   withStats — "true" joins season totals + projections for the Player Stats Grid
+//   season    — integer season for the withStats join (defaults to current year)
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
-  const limit = Math.min(parseInt(String(req.query.limit || '50'), 10), 200);
+  const limit = Math.min(parseInt(String(req.query.limit || '50'), 10), 500);
   const offset = parseInt(String(req.query.offset || '0'), 10);
   const position = req.query.position as string | undefined;
   const q = req.query.q as string | undefined;
   const sortBy = (req.query.sortBy as string | undefined) === 'value_rank' ? 'value_rank' : 'adp';
   const rankedOnly = req.query.rankedOnly === 'true';
+  const withStats = req.query.withStats === 'true';
+  const season = parseInt(String(req.query.season || new Date().getFullYear()), 10);
 
-  logger.info('[players] GET / — list', { limit, offset, position, q, sortBy, rankedOnly });
+  logger.info('[players] GET / — list', { limit, offset, position, q, sortBy, rankedOnly, withStats, season });
   try {
+    // Base select — when withStats is set we embed the two new tables via the
+    // PostgREST relationship syntax. We alias the joined selects with
+    // `!inner`-style filters so we can scope them to the requested season
+    // without exploding into multiple rows per player.
+    const selectCols = withStats
+      ? `id, name, position, nfl_team, status, adp, value_rank, headshot_url, updated_at,
+         season_stats:player_season_stats(
+           season, games_played, fantasy_points_ppr, fantasy_points_std,
+           pass_yds, pass_td, pass_int,
+           rush_yds, rush_td,
+           targets, rec, rec_yds, rec_td,
+           fumbles_lost
+         ),
+         projection:player_projections(
+           season, proj_fantasy_pts_ppr, proj_fantasy_pts_std,
+           proj_games, proj_ppg_ppr, tier, bye_week
+         )`
+      : 'id, name, position, nfl_team, status, adp, value_rank, headshot_url, updated_at';
+
     let query = supabaseAdmin
       .from('players')
-      .select(
-        'id, name, position, nfl_team, status, adp, value_rank, headshot_url, updated_at',
-        { count: 'exact' }
-      )
+      .select(selectCols, { count: 'exact' })
       .order(sortBy, { ascending: true, nullsFirst: false })
       .order('name', { ascending: true })
       .range(offset, offset + limit - 1);
@@ -45,8 +65,25 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       throw new AppError('Failed to fetch players', 500);
     }
 
-    logger.debug('[players] GET / — success', { returned: data?.length, total: count });
-    res.json({ players: data || [], total: count ?? 0, limit, offset });
+    // When withStats is set, collapse the embedded arrays into single objects
+    // for the requested season. PostgREST returns each embed as an array even
+    // when we expect at most one row (because there's no FK-declared uniqueness
+    // PostgREST can prove at query time). The frontend wants `seasonStats` and
+    // `projection` as flat objects or null.
+    const players = withStats
+      ? (data || []).map((row: Record<string, unknown>) => {
+          const statsArr = (row.season_stats as Array<Record<string, unknown>> | null) || [];
+          const projArr = (row.projection as Array<Record<string, unknown>> | null) || [];
+          return {
+            ...row,
+            season_stats: statsArr.find((s) => s.season === season) || null,
+            projection: projArr.find((p) => p.season === season) || null,
+          };
+        })
+      : data || [];
+
+    logger.debug('[players] GET / — success', { returned: players.length, total: count });
+    res.json({ players, total: count ?? 0, limit, offset });
   } catch (err) {
     if (!(err instanceof AppError)) logger.error('[players] GET / — unexpected error', { error: err });
     next(err);
