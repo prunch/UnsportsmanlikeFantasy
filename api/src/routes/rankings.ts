@@ -203,14 +203,37 @@ router.post(
     }));
 
     // ── 3. Match each row and collect updates ────────────────
-    const updates: { id: string; value_rank: number }[] = [];
+    // We must include the NOT NULL columns (name/position/nfl_team) in each
+    // upsert payload. PostgREST translates .upsert() into
+    // `INSERT ... ON CONFLICT (id) DO UPDATE`, and Postgres evaluates NOT NULL
+    // on the INSERT attempt BEFORE checking for a conflict. So an upsert of
+    // just `{id, value_rank}` fails with
+    //   null value in column "name" of relation "players" violates not-null constraint
+    // even when the row already exists. We pulled name/position/nfl_team
+    // straight from the DB one paragraph up, so re-passing them is free and
+    // safe — the ON CONFLICT DO UPDATE branch will overwrite those columns
+    // with the same values they already have.
+    interface RankingUpdate {
+      id: string;
+      name: string;
+      position: string;
+      nfl_team: string;
+      value_rank: number;
+    }
+    const updates: RankingUpdate[] = [];
     const failures: FailureDetail[] = [];
 
     for (const row of rows) {
       const match = findBestMatch(row, candidates);
 
       if (match) {
-        updates.push({ id: match.id, value_rank: row.rk });
+        updates.push({
+          id: match.id,
+          name: match.name,
+          position: match.position,
+          nfl_team: match.nfl_team,
+          value_rank: row.rk,
+        });
       } else {
         failures.push({
           rank: row.rk,
@@ -260,22 +283,29 @@ router.post(
     for (let i = 0; i < updates.length; i += BATCH_SIZE) {
       const batch = updates.slice(i, i + BATCH_SIZE);
 
-      // Upsert by ID — safe to run even if value_rank just got cleared
+      // Upsert by ID — includes NOT NULL columns so the INSERT path is legal
+      // even though ON CONFLICT will take the UPDATE branch in practice.
       const { error: upsertErr } = await supabaseAdmin
         .from('players')
-        .upsert(
-          batch.map(({ id, value_rank }) => ({ id, value_rank })),
-          { onConflict: 'id' }
-        );
+        .upsert(batch, { onConflict: 'id' });
 
       if (upsertErr) {
+        console.error(
+          `[rankings/import] batch ${Math.floor(i / BATCH_SIZE) + 1} upsert failed:`,
+          {
+            message: upsertErr.message,
+            code: upsertErr.code,
+            details: upsertErr.details,
+            hint: upsertErr.hint,
+          }
+        );
         writeErrors += batch.length;
         for (const u of batch) {
           writeFailures.push({
             rank: u.value_rank,
-            player: `[DB id: ${u.id}]`,
-            pos: null,
-            team: null,
+            player: u.name,
+            pos: u.position,
+            team: u.nfl_team,
             reason: `DB write failed: ${upsertErr.message}`,
           });
         }
