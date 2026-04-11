@@ -174,10 +174,10 @@ router.post('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res
     const invalid = cardIds.filter(id => !pool.includes(id));
     if (invalid.length > 0) throw new AppError('One or more card IDs are not in your pick pool', 400);
 
-    // Check stack size — max 6 unplayed cards
+    // Check stack size — v2 deck cap is 12 unplayed cards
     const currentStack = await getStackSize(req.user!.id, leagueId);
-    const available = Math.max(0, 6 - currentStack);
-    if (available === 0) throw new AppError('Your card stack is full (max 6 cards)', 400);
+    const available = Math.max(0, 12 - currentStack);
+    if (available === 0) throw new AppError('Your card stack is full (max 12 cards)', 400);
     const toAdd = cardIds.slice(0, Math.min(cardIds.length, available));
 
     // Add cards to user's stack
@@ -223,11 +223,20 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
     const { id: leagueId } = req.params;
     const teamId = await requireMembership(leagueId, req.user!.id);
 
+    // v2: expand play_slot enum to include switcheroo/buff/debuff/wild.
+    // v1 values ('own_team','opponent','any_team') stay valid for backward
+    // compatibility while the v1 CardDeckPage is retired. target_group is
+    // accepted for group-scope plays (target_player_id should be null when
+    // target_group is set).
     const playSchema = z.object({
       user_card_id: z.string().uuid(),
-      play_slot: z.enum(['own_team', 'opponent', 'any_team']),
+      play_slot: z.enum([
+        'own_team', 'opponent', 'any_team',
+        'switcheroo', 'buff', 'debuff', 'wild'
+      ]),
       target_player_id: z.string().optional(),
-      target_team_id: z.string().uuid().optional()
+      target_team_id: z.string().uuid().optional(),
+      target_group: z.enum(['QB', 'RB', 'WR', 'TE', 'K', 'DEF']).optional()
     });
     const body = playSchema.parse(req.body);
 
@@ -259,9 +268,38 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
       throw new AppError(`You already played a card in the ${body.play_slot.replace('_', ' ')} slot this week`, 400);
     }
 
-    // Validate slot-based targeting rules
+    // Validate slot-based targeting rules (v1 + v2)
     if (body.play_slot === 'own_team' && body.target_team_id && body.target_team_id !== teamId) {
       throw new AppError('The own_team slot must target your own team', 400);
+    }
+    // v2: switcheroo must target caller's own team
+    if (body.play_slot === 'switcheroo' && body.target_team_id && body.target_team_id !== teamId) {
+      throw new AppError('The Switcheroo slot must target your own team', 400);
+    }
+    // v2: buff slot must target caller's own team
+    if (body.play_slot === 'buff' && body.target_team_id && body.target_team_id !== teamId) {
+      throw new AppError('The buff slot must target a player on your own team', 400);
+    }
+    // v2: debuff slot must NOT target caller's own team
+    if (body.play_slot === 'debuff' && body.target_team_id === teamId) {
+      throw new AppError('The debuff slot cannot target your own team', 400);
+    }
+    // v2: wild slot must NOT target caller's own team (opponent check is a
+    // TODO — requires looking up current-week opponent, deferred to the
+    // /cards/play-wild dedicated endpoint)
+    if (body.play_slot === 'wild' && body.target_team_id === teamId) {
+      throw new AppError('The wild slot cannot target your own team', 400);
+    }
+
+    // v2: ensure exactly one of target_player_id / target_group is set,
+    // matching the card's declared target_scope
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const card = (userCard as any).card;
+    if (card?.target_scope === 'group' && !body.target_group) {
+      throw new AppError('Group-scope cards require a target_group (QB, RB, WR, TE, K, DEF)', 400);
+    }
+    if (card?.target_scope === 'player' && !body.target_player_id) {
+      throw new AppError('Player-scope cards require a target_player_id', 400);
     }
 
     // Record the play
@@ -274,6 +312,7 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
         user_card_id: userCard.id,
         target_player_id: body.target_player_id || null,
         target_team_id: body.target_team_id || null,
+        target_group: body.target_group || null,
         play_slot: body.play_slot,
         week,
         season

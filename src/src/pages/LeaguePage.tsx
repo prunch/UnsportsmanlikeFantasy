@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { apiGet, apiPost } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers, MessageCircle, Trophy, Shield, ListOrdered } from 'lucide-react';
+import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers, MessageCircle, Trophy, Shield, ListOrdered, Swords } from 'lucide-react';
 import RosterPage from './league/RosterPage';
 import DraftRoomPage from './league/DraftRoomPage';
 import WaiverWirePage from './league/WaiverWirePage';
@@ -12,6 +12,8 @@ import CardDeckPage from './CardDeckPage';
 import CardPickPage from './CardPickPage';
 import ChatPage from './league/ChatPage';
 import ScoreboardPage from './league/ScoreboardPage';
+import MatchupsPage from './league/MatchupsPage';
+import MatchupDetailPage from './league/MatchupDetailPage';
 import CommissionerPage from './league/CommissionerPage';
 
 export interface League {
@@ -55,6 +57,9 @@ function LeagueNav({ leagueId, status, isCommissioner }: { leagueId: string; sta
     ...(status === 'draft' ? [{ to: `${base}/draft`, label: 'Draft Room', icon: <Zap size={16} /> }] : []),
     ...(status === 'active' || status === 'playoffs'
       ? [{ to: `${base}/waivers`, label: 'Waiver Wire', icon: <TrendingUp size={16} /> }]
+      : []),
+    ...(status === 'active' || status === 'playoffs'
+      ? [{ to: `${base}/matchups`, label: 'Matchups', icon: <Swords size={16} /> }]
       : []),
     ...(status === 'active' || status === 'playoffs'
       ? [{ to: `${base}/cards`, label: 'Cards', icon: <Layers size={16} /> }]
@@ -368,6 +373,26 @@ export default function LeaguePage() {
           element={
             league.status === 'active' || league.status === 'playoffs' || league.status === 'complete' ? (
               <ScoreboardPage league={league} />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
+        <Route
+          path="matchups"
+          element={
+            league.status === 'active' || league.status === 'playoffs' ? (
+              <MatchupsPage league={league} />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
+        <Route
+          path="matchups/:matchupId"
+          element={
+            league.status === 'active' || league.status === 'playoffs' ? (
+              <MatchupDetailPage league={league} />
             ) : (
               <Navigate to={`/leagues/${id}`} replace />
             )
