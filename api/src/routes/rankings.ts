@@ -202,38 +202,17 @@ router.post(
       nfl_team: p.nfl_team,
     }));
 
-    // ── 3. Match each row and collect updates ────────────────
-    // We must include the NOT NULL columns (name/position/nfl_team) in each
-    // upsert payload. PostgREST translates .upsert() into
-    // `INSERT ... ON CONFLICT (id) DO UPDATE`, and Postgres evaluates NOT NULL
-    // on the INSERT attempt BEFORE checking for a conflict. So an upsert of
-    // just `{id, value_rank}` fails with
-    //   null value in column "name" of relation "players" violates not-null constraint
-    // even when the row already exists. We pulled name/position/nfl_team
-    // straight from the DB one paragraph up, so re-passing them is free and
-    // safe — the ON CONFLICT DO UPDATE branch will overwrite those columns
-    // with the same values they already have.
-    interface RankingUpdate {
-      id: string;
-      name: string;
-      position: string;
-      nfl_team: string;
-      value_rank: number;
-    }
-    const updates: RankingUpdate[] = [];
+    // ── 3. Match each CSV row against the player list ───────
+    // Build a map of matched player ID → new rank. Anything NOT in this map
+    // gets value_rank=null (cleared) in the final write.
+    const newRanks = new Map<string, number>();
     const failures: FailureDetail[] = [];
 
     for (const row of rows) {
       const match = findBestMatch(row, candidates);
 
       if (match) {
-        updates.push({
-          id: match.id,
-          name: match.name,
-          position: match.position,
-          nfl_team: match.nfl_team,
-          value_rank: row.rk,
-        });
+        newRanks.set(match.id, row.rk);
       } else {
         failures.push({
           rank: row.rk,
@@ -245,46 +224,49 @@ router.post(
       }
     }
 
-    // ── 4. Apply updates — overwrite existing rankings ───────
-    // Supabase doesn't support bulk UPDATE with individual values, so we
-    // clear existing ranks first, then write the new set.
-    // Wrapped in sequential awaits (not Promise.all) to avoid Supabase rate limits.
-
-    // Clear all existing value_rank values.
+    // ── 4. Write the entire players table in one pass ───────
+    // Previously we did [clear all value_rank] then [upsert matched rows],
+    // but the separate clear step was hitting an intermittent
+    // "permission denied for table players" (42501) that we couldn't
+    // reproduce from raw SQL — the startup probe with the exact same
+    // supabaseAdmin client could do zero-match UPDATEs on players just fine,
+    // yet the many-row .neq('id', ...) update failed in the request context.
     //
-    // PostgREST requires every UPDATE to carry a WHERE clause, so we pass
-    // a filter that always matches every row: "id ≠ <impossible UUID>".
-    // This is the canonical Supabase JS idiom for "update every row" and
-    // sidesteps quirks with `is null` filter parsing we've hit before.
-    const IMPOSSIBLE_UUID = '00000000-0000-0000-0000-000000000000';
-    const { error: clearErr } = await supabaseAdmin
-      .from('players')
-      .update({ value_rank: null })
-      .neq('id', IMPOSSIBLE_UUID);
-
-    if (clearErr) {
-      // Log the full error object to Render logs so we can diagnose
-      // issues like missing columns, RLS blocking, or bad service key.
-      console.error('[rankings/import] clear step failed:', clearErr);
-      res.status(500).json({
-        error: 'Failed to clear existing rankings',
-        detail: clearErr.message,
-        code: clearErr.code,
-        hint: clearErr.hint,
-      });
-      return;
+    // The simplest robust fix: merge the clear and the write into a single
+    // bulk upsert that covers every player. Matched players get their new
+    // rank; everyone else gets value_rank=null. That reproduces the "old
+    // rankings are replaced" semantic without a separate delete/clear call.
+    //
+    // Why pass name/position/nfl_team? Because PostgREST translates upsert()
+    // into INSERT..ON CONFLICT, and Postgres evaluates NOT NULL on the
+    // INSERT attempt BEFORE resolving the conflict. We pulled those values
+    // from the same SELECT one step up, so re-passing them is free and safe
+    // — the ON CONFLICT DO UPDATE branch overwrites them with the same
+    // values they already have.
+    interface PlayerUpsert {
+      id: string;
+      name: string;
+      position: string;
+      nfl_team: string;
+      value_rank: number | null;
     }
 
-    // Write new rankings in batches of 50 to avoid hitting PostgREST limits
-    const BATCH_SIZE = 50;
+    const upsertRows: PlayerUpsert[] = candidates.map((c) => ({
+      id: c.id,
+      name: c.name,
+      position: c.position,
+      nfl_team: c.nfl_team,
+      value_rank: newRanks.get(c.id) ?? null,
+    }));
+
+    const matchedCount = newRanks.size;
+    const BATCH_SIZE = 200;
     let writeErrors = 0;
     const writeFailures: FailureDetail[] = [];
 
-    for (let i = 0; i < updates.length; i += BATCH_SIZE) {
-      const batch = updates.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < upsertRows.length; i += BATCH_SIZE) {
+      const batch = upsertRows.slice(i, i + BATCH_SIZE);
 
-      // Upsert by ID — includes NOT NULL columns so the INSERT path is legal
-      // even though ON CONFLICT will take the UPDATE branch in practice.
       const { error: upsertErr } = await supabaseAdmin
         .from('players')
         .upsert(batch, { onConflict: 'id' });
@@ -299,10 +281,12 @@ router.post(
             hint: upsertErr.hint,
           }
         );
-        writeErrors += batch.length;
-        for (const u of batch) {
+        // Only count this batch's ranked rows as a matched-but-failed write.
+        const rankedInBatch = batch.filter((r) => r.value_rank !== null);
+        writeErrors += rankedInBatch.length;
+        for (const u of rankedInBatch) {
           writeFailures.push({
-            rank: u.value_rank,
+            rank: u.value_rank as number,
             player: u.name,
             pos: u.position,
             team: u.nfl_team,
@@ -315,7 +299,7 @@ router.post(
     // ── 5. Return stats ──────────────────────────────────────
     const result: ImportResult = {
       total: rows.length,
-      matched: updates.length - writeErrors,
+      matched: matchedCount - writeErrors,
       failed: failures.length + writeErrors,
       failures: [...failures, ...writeFailures],
     };
