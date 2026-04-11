@@ -2,10 +2,28 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import { createClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '../utils/supabase';
 import { AppError } from '../middleware/errorHandler';
 
 const router = Router();
+
+// Ephemeral Supabase client factory used ONLY for auth flows that establish
+// a user session (signInWithPassword, refreshSession). Calling those methods
+// on the shared `supabaseAdmin` client causes supabase-js to attach the
+// resulting user session to that shared instance, and every subsequent data
+// call in the process authenticates as the last-logged-in user (role =
+// authenticated) instead of service_role — which then manifests as totally
+// baffling `permission denied for table X` (42501) errors on admin routes
+// the first time anyone logs in. Using a fresh throwaway client per login
+// isolates the hijacked session so it can't leak.
+function makeAuthClient() {
+  return createClient(
+    process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
+    process.env.SUPABASE_ANON_KEY || 'placeholder',
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -80,7 +98,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
   try {
     const body = loginSchema.parse(req.body);
 
-    const { data: authData, error: authError } = await supabaseAdmin.auth.signInWithPassword({
+    const { data: authData, error: authError } = await makeAuthClient().auth.signInWithPassword({
       email: body.email,
       password: body.password
     });
@@ -120,7 +138,7 @@ router.post('/refresh', async (req: Request, res: Response, next: NextFunction) 
     const { refreshToken } = req.body;
     if (!refreshToken) throw new AppError('Refresh token required', 400);
 
-    const { data, error } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken });
+    const { data, error } = await makeAuthClient().auth.refreshSession({ refresh_token: refreshToken });
     if (error || !data.user) throw new AppError('Invalid refresh token', 401);
 
     const { data: profile } = await supabaseAdmin

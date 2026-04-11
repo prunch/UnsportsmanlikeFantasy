@@ -185,22 +185,49 @@ router.post(
     }
 
     // ── 2. Load all players from DB ──────────────────────────
-    // Fetch everything once — avoids N+1 queries (300 players = tiny payload)
-    const { data: dbPlayers, error: fetchErr } = await supabaseAdmin
-      .from('players')
-      .select('id, name, position, nfl_team');
+    // PostgREST enforces a default `db-max-rows` (typically 1000) on any
+    // SELECT that doesn't specify a range. The players table currently has
+    // ~1800 rows, so a naive .select() silently truncates and hundreds of
+    // top fantasy players (which live past row 1000 in physical storage)
+    // end up missing from the candidate list — every CSV row for those
+    // players reports "No matching player found in database".
+    //
+    // Paginate explicitly with .range() to defeat the cap. Page size 1000
+    // matches the PostgREST ceiling, and we loop until we get a short page.
+    const candidates: MatchCandidate[] = [];
+    const PAGE_SIZE = 1000;
+    let pageStart = 0;
+    while (true) {
+      const { data: dbPlayers, error: fetchErr } = await supabaseAdmin
+        .from('players')
+        .select('id, name, position, nfl_team')
+        .range(pageStart, pageStart + PAGE_SIZE - 1);
 
-    if (fetchErr || !dbPlayers) {
-      res.status(500).json({ error: 'Failed to load players from database' });
-      return;
+      if (fetchErr) {
+        console.error('[rankings/import] player fetch failed:', fetchErr);
+        res.status(500).json({
+          error: 'Failed to load players from database',
+          detail: fetchErr.message,
+          code: fetchErr.code,
+        });
+        return;
+      }
+
+      const page = dbPlayers ?? [];
+      for (const p of page) {
+        candidates.push({
+          id: p.id,
+          name: p.name,
+          position: p.position,
+          nfl_team: p.nfl_team,
+        });
+      }
+
+      if (page.length < PAGE_SIZE) break; // last page
+      pageStart += PAGE_SIZE;
+      if (pageStart > 100000) break; // sanity guard
     }
-
-    const candidates: MatchCandidate[] = dbPlayers.map((p) => ({
-      id: p.id,
-      name: p.name,
-      position: p.position,
-      nfl_team: p.nfl_team,
-    }));
+    console.info(`[rankings/import] loaded ${candidates.length} player candidates`);
 
     // ── 3. Match each CSV row against the player list ───────
     // Build a map of matched player ID → new rank. Anything NOT in this map
