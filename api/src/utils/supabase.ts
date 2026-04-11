@@ -97,35 +97,90 @@ export const supabase = createClient(
   supabaseAnonKey || 'placeholder'
 );
 
-// Live startup probe: try a trivial query against `cards` using the admin
-// client. This is the authoritative answer to "does my key actually have
-// service_role grants right now?". If it fails with 42501 here, it will
-// definitely fail in /api/admin/cards — and we'll see it in Render's boot
-// logs instead of only at the moment a user hits the page.
+// Live startup probe: exercise the exact set of tables + operations the
+// admin routes use and log pass/fail for each one. This is the authoritative
+// answer to "what can my current SUPABASE_SERVICE_ROLE_KEY actually touch?".
+//
+// Supabase's new API key system (sb_secret_*) allows restricting a secret
+// key to specific schemas/tables. A key that's been scoped down will
+// successfully authenticate as service_role but only have access to the
+// tables it was granted — producing a confusing split where one admin
+// endpoint works and another returns 42501. Probing each table up-front
+// tells us exactly which routes will break and why, before users hit them.
 async function probeAdminAccess(): Promise<void> {
   if (!supabaseUrl || !supabaseServiceKey || supabaseServiceKey === 'placeholder') {
     console.warn('⚠️  [probe] skipping — SUPABASE_SERVICE_ROLE_KEY not configured');
     return;
   }
-  try {
-    const { error } = await supabaseAdmin
-      .from('cards')
-      .select('id', { count: 'exact', head: true });
-    if (error) {
-      console.error(
-        `🚨 [probe] supabaseAdmin cannot read \`cards\`: ` +
-        `${error.message}${error.code ? ` (code=${error.code})` : ''}${error.hint ? ` hint="${error.hint}"` : ''}`
+
+  type ProbeOp = 'SELECT' | 'UPDATE-noop';
+  interface ProbeSpec {
+    table: string;
+    op: ProbeOp;
+  }
+
+  // Every (table, op) the admin surface actually uses
+  const probes: ProbeSpec[] = [
+    { table: 'cards', op: 'SELECT' },
+    { table: 'cards', op: 'UPDATE-noop' },
+    { table: 'players', op: 'SELECT' },
+    { table: 'players', op: 'UPDATE-noop' },
+    { table: 'users', op: 'SELECT' },
+    { table: 'leagues', op: 'SELECT' },
+  ];
+
+  const IMPOSSIBLE_ID = '00000000-0000-0000-0000-000000000000';
+  const results: string[] = [];
+
+  for (const { table, op } of probes) {
+    try {
+      let errObj: { message: string; code?: string; hint?: string } | null = null;
+
+      if (op === 'SELECT') {
+        const { error } = await supabaseAdmin
+          .from(table)
+          .select('*', { count: 'exact', head: true });
+        errObj = error ?? null;
+      } else {
+        // Match-zero-rows UPDATE: can't touch any real data, but Postgres
+        // still evaluates grants/RLS, so it surfaces 42501 the same way a
+        // real write would.
+        const { error } = await supabaseAdmin
+          .from(table)
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', IMPOSSIBLE_ID);
+        errObj = error ?? null;
+      }
+
+      if (errObj) {
+        results.push(
+          `  🚨 ${table.padEnd(8)} ${op.padEnd(12)} ${errObj.message}` +
+          `${errObj.code ? ` (code=${errObj.code})` : ''}`
+        );
+      } else {
+        results.push(`  ✅ ${table.padEnd(8)} ${op.padEnd(12)} ok`);
+      }
+    } catch (err) {
+      results.push(
+        `  🚨 ${table.padEnd(8)} ${op.padEnd(12)} threw: ${err instanceof Error ? err.message : String(err)}`
       );
-      console.error(
-        `🚨 [probe] This means the current SUPABASE_SERVICE_ROLE_KEY is NOT ` +
-        `authorized as service_role. All /api/admin/cards requests will fail ` +
-        `until you replace it with a valid sb_secret_* (or legacy service_role JWT) key in Render env vars.`
-      );
-    } else {
-      console.info('✅ [probe] supabaseAdmin can read `cards` — service_role grants are active');
     }
-  } catch (err) {
-    console.error(`🚨 [probe] unexpected failure: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  console.info('── [probe] supabaseAdmin access matrix ──────────────');
+  for (const r of results) console.info(r);
+  console.info('─────────────────────────────────────────────────────');
+
+  const anyFailed = results.some((r) => r.includes('🚨'));
+  if (anyFailed) {
+    console.error(
+      `🚨 [probe] At least one operation is denied. If cards is OK but players is not, ` +
+      `your sb_secret_* key is likely SCOPED to specific tables. Regenerate it in the ` +
+      `Supabase dashboard (Settings → API Keys) WITHOUT any "Restrict to..." scoping, ` +
+      `or widen the restriction to cover the tables shown above.`
+    );
+  } else {
+    console.info('✅ [probe] all probes passed — supabaseAdmin has full access');
   }
 }
 
