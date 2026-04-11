@@ -45,12 +45,23 @@ export function Card({ card, faceDown = false, showPickActions = false, onPick, 
     ? `${isBuff ? '+' : '-'}${card.modifier_value}%`
     : `${isBuff ? '+' : '-'}${card.modifier_value} pts`;
 
-  function handleClick() {
+  function handleBackClick() {
     if (disabled) return;
     if (!flipped) {
       setFlipped(true);
     }
   }
+
+  // Once the card is face-up in pick mode, clicking the face itself
+  // toggles selection (no separate "Take It" button).
+  function handleFrontClick() {
+    if (disabled) return;
+    if (!flipped) return;
+    if (!showPickActions || !onPick) return;
+    onPick(card);
+  }
+
+  const frontInteractive = flipped && showPickActions && !!onPick && !disabled;
 
   return (
     <div
@@ -67,11 +78,12 @@ export function Card({ card, faceDown = false, showPickActions = false, onPick, 
       >
         {/* Front face */}
         <div
-          className={`absolute inset-0 rounded-xl border-2 ${rarity.border} bg-slate-800 
+          onClick={handleFrontClick}
+          className={`absolute inset-0 rounded-xl border-2 ${rarity.border} bg-slate-800
             ${rarity.glow ? `shadow-lg ${rarity.glow}` : ''}
             ${selected ? 'ring-2 ring-gridiron-gold' : ''}
-            ${!flipped && !disabled ? 'cursor-pointer hover:scale-105' : ''}
-            transition-all duration-200 p-4 flex flex-col`}
+            ${frontInteractive ? 'cursor-pointer hover:scale-[1.03] hover:border-gridiron-gold/60' : ''}
+            transition-all duration-200 p-4 flex flex-col select-none`}
           style={{ backfaceVisibility: 'hidden' }}
         >
           {/* Rarity badge */}
@@ -102,19 +114,6 @@ export function Card({ card, faceDown = false, showPickActions = false, onPick, 
               {card.target_position || card.target_type}
             </span>
           </div>
-
-          {/* Pick actions */}
-          {showPickActions && flipped && onPick && (
-            <div className="mt-3 pt-3 border-t border-slate-700">
-              <button
-                onClick={() => onPick(card)}
-                disabled={disabled}
-                className="w-full btn-primary text-sm py-1.5 disabled:opacity-50"
-              >
-                Take It
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Back face (face-down card back) */}
@@ -123,7 +122,7 @@ export function Card({ card, faceDown = false, showPickActions = false, onPick, 
             flex flex-col items-center justify-center cursor-pointer hover:border-gridiron-gold/60 transition-colors
             select-none`}
           style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
-          onClick={handleClick}
+          onClick={handleBackClick}
         >
           <div className="flex flex-col items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-gridiron-gold/10 border border-gridiron-gold/30 flex items-center justify-center">
