@@ -8,25 +8,31 @@ const router = Router();
 
 // ── GET /api/players ──────────────────────────────────────────────────────────
 // Query params:
-//   limit     — page size, max 500, default 50
-//   offset    — pagination offset
-//   position  — QB/RB/WR/TE/K/DEF or ALL
-//   q         — case-insensitive name search
-//   sortBy    — "adp" (default) | "value_rank"
-//   rankedOnly — "true" filters to rows with a non-null value_rank
-//   withStats — "true" joins season totals + projections for the Player Stats Grid
-//   season    — integer season for the withStats join (defaults to current year)
+//   limit         — page size, max 2500, default 50
+//   offset        — pagination offset
+//   position      — QB/RB/WR/TE/K/DEF or ALL
+//   q             — case-insensitive name search
+//   sortBy        — "adp" (default) | "value_rank"
+//   rankedOnly    — "true" filters to rows with a non-null value_rank
+//   withStats     — "true" joins season totals + projections for the Player Stats Grid
+//   statsSeason   — integer season to pick season_stats from (default: currentYear-1)
+//   projSeason    — integer season to pick projection from (default: currentYear)
+//   season        — legacy alias: sets both statsSeason and projSeason to the same year
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
-  const limit = Math.min(parseInt(String(req.query.limit || '50'), 10), 500);
+  const limit = Math.min(parseInt(String(req.query.limit || '50'), 10), 2500);
   const offset = parseInt(String(req.query.offset || '0'), 10);
   const position = req.query.position as string | undefined;
   const q = req.query.q as string | undefined;
   const sortBy = (req.query.sortBy as string | undefined) === 'value_rank' ? 'value_rank' : 'adp';
   const rankedOnly = req.query.rankedOnly === 'true';
   const withStats = req.query.withStats === 'true';
-  const season = parseInt(String(req.query.season || new Date().getFullYear()), 10);
+  const now = new Date().getFullYear();
+  // Legacy `season` param wins if provided; otherwise stats = last year, proj = this year.
+  const legacySeason = req.query.season != null ? parseInt(String(req.query.season), 10) : null;
+  const statsSeason = legacySeason ?? parseInt(String(req.query.statsSeason || now - 1), 10);
+  const projSeason = legacySeason ?? parseInt(String(req.query.projSeason || now), 10);
 
-  logger.info('[players] GET / — list', { limit, offset, position, q, sortBy, rankedOnly, withStats, season });
+  logger.info('[players] GET / — list', { limit, offset, position, q, sortBy, rankedOnly, withStats, statsSeason, projSeason });
   try {
     // Base select — when withStats is set we embed the two new tables via the
     // PostgREST relationship syntax. We alias the joined selects with
@@ -66,18 +72,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     // When withStats is set, collapse the embedded arrays into single objects
-    // for the requested season. PostgREST returns each embed as an array even
+    // for the requested seasons. PostgREST returns each embed as an array even
     // when we expect at most one row (because there's no FK-declared uniqueness
-    // PostgREST can prove at query time). The frontend wants `seasonStats` and
-    // `projection` as flat objects or null.
+    // PostgREST can prove at query time). The frontend wants `season_stats` and
+    // `projection` as flat objects or null — with stats defaulting to last year
+    // and projections defaulting to this year.
     const players = withStats
       ? (data || []).map((row: Record<string, unknown>) => {
           const statsArr = (row.season_stats as Array<Record<string, unknown>> | null) || [];
           const projArr = (row.projection as Array<Record<string, unknown>> | null) || [];
           return {
             ...row,
-            season_stats: statsArr.find((s) => s.season === season) || null,
-            projection: projArr.find((p) => p.season === season) || null,
+            season_stats: statsArr.find((s) => s.season === statsSeason) || null,
+            projection: projArr.find((p) => p.season === projSeason) || null,
           };
         })
       : data || [];

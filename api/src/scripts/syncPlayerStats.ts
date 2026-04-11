@@ -189,11 +189,13 @@ function computeFantasyPoints(s: ParsedStats, ppr: boolean): number {
 function seedStatsFor(
   position: string,
   adp: number | null,
-  _valueRank: number | null
+  valueRank: number | null
 ): { stats: ParsedStats; fppr: number; fstd: number; projPpr: number; projStd: number } {
-  // ADP is our only signal for "how good is this player" in seed mode. Lower
-  // ADP => more usage. Clamp to [1, 400] and flip so high value => more stats.
-  const raw = adp ?? 200;
+  // ADP is our preferred signal for "how good is this player" in seed mode.
+  // Lower ADP => more usage. When the roster was imported without ADP (as is
+  // currently the case), fall back to value_rank so we still get meaningful
+  // per-player variance instead of every RB having identical numbers.
+  const raw = adp ?? valueRank ?? 200;
   const rank = Math.max(1, Math.min(400, raw));
   const score = (400 - rank) / 400; // 0..1
 
@@ -306,9 +308,12 @@ async function main(): Promise<void> {
         fantasy_points_ppr: fppr,
         fantasy_points_std: fstd,
       });
+      // Projections are forward-looking — if the stats season is e.g. 2025
+      // (last year's totals), the matching projection row is for 2026
+      // (the upcoming season). The API pairs them this way by default too.
       projRows.push({
         player_id: p.id,
-        season: args.season,
+        season: args.season + 1,
         proj_fantasy_pts_ppr: projPpr,
         proj_fantasy_pts_std: projStd,
         proj_games: 17,

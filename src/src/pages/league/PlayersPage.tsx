@@ -58,12 +58,14 @@ export default function PlayersPage({ league }: { league: League }) {
   }, [league.id, token]);
 
   // ── Fetcher wired into PlayerGrid ─────────────────────────
+  // We intentionally fetch the ENTIRE player pool in one request (limit 2500,
+  // which is above the ~1800 rows we have) so that client-side sort by any
+  // column is universal rather than per-page. At 1800 rows this is ~1MB
+  // uncompressed / ~150KB gzipped, which is fine for a pre-draft load.
   const fetcher = useCallback(
     async ({
       search,
       position,
-      limit,
-      offset,
     }: {
       search: string;
       position: string;
@@ -72,8 +74,11 @@ export default function PlayersPage({ league }: { league: League }) {
     }): Promise<FetchResult> => {
       const params = new URLSearchParams();
       params.set('withStats', 'true');
-      params.set('limit', String(limit));
-      params.set('offset', String(offset));
+      params.set('limit', '2500');
+      params.set('offset', '0');
+      // Server-side default order so the first paint is already in the right
+      // order even before the client-side sort hook runs.
+      params.set('sortBy', 'value_rank');
       if (search) params.set('q', search);
       if (position !== 'ALL') params.set('position', position);
 
@@ -282,8 +287,8 @@ export default function PlayersPage({ league }: { league: League }) {
       <PlayerGrid
         fetcher={fetcher}
         columns={columns}
-        pageSize={100}
-        initialSort={{ key: 'adp', dir: 'asc' }}
+        pageSize={2500}
+        initialSort={{ key: 'value_rank', dir: 'asc' }}
         refreshKey={refreshKey}
       />
     </div>
