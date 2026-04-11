@@ -45,7 +45,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
            pass_yds, pass_td, pass_int,
            rush_yds, rush_td,
            targets, rec, rec_yds, rec_td,
-           fumbles_lost
+           fumbles_lost,
+           fg_made, fg_att, fg_long, xp_made, xp_att,
+           sacks, def_int, fumbles_recovered, def_td, safeties, points_allowed, yards_allowed
          ),
          projection:player_projections(
            season, proj_fantasy_pts_ppr, proj_fantasy_pts_std,

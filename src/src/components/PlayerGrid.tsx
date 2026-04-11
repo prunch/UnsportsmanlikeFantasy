@@ -23,6 +23,7 @@ export interface SeasonStats {
   games_played: number;
   fantasy_points_ppr: number;
   fantasy_points_std: number;
+  // Offense
   pass_yds: number;
   pass_td: number;
   pass_int: number;
@@ -33,6 +34,20 @@ export interface SeasonStats {
   rec_yds: number;
   rec_td: number;
   fumbles_lost: number;
+  // Kicker
+  fg_made?: number;
+  fg_att?: number;
+  fg_long?: number;
+  xp_made?: number;
+  xp_att?: number;
+  // Team defense
+  sacks?: number;
+  def_int?: number;
+  fumbles_recovered?: number;
+  def_td?: number;
+  safeties?: number;
+  points_allowed?: number;
+  yards_allowed?: number;
 }
 
 export interface Projection {
@@ -94,7 +109,12 @@ export interface PlayerGridProps {
     offset: number;
   }) => Promise<FetchResult>;
 
-  columns: ColumnDef[];
+  /**
+   * Columns for the grid. Either a static array, or a function of the
+   * current position filter so parents can return position-specific
+   * column sets (e.g. kicker columns when the DEF filter is selected).
+   */
+  columns: ColumnDef[] | ((position: string) => ColumnDef[]);
 
   /**
    * Optional per-row action button area (Draft / Claim / etc). Rendered
@@ -381,6 +401,163 @@ export const PLAYER_GRID_COLUMNS: Record<string, ColumnDef> = {
     ),
     compare: (a, b) => (b.season_stats?.targets ?? -1) - (a.season_stats?.targets ?? -1),
   },
+
+  // ── Kicker columns ────────────────────────────────────────
+  fg_made: {
+    key: 'fg_made',
+    label: 'FGM',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-300 text-sm tabular-nums">{num(statOrDash(p, 'fg_made'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.fg_made ?? -1) - (a.season_stats?.fg_made ?? -1),
+  },
+  fg_att: {
+    key: 'fg_att',
+    label: 'FGA',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-400 text-sm tabular-nums">{num(statOrDash(p, 'fg_att'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.fg_att ?? -1) - (a.season_stats?.fg_att ?? -1),
+  },
+  fg_pct: {
+    key: 'fg_pct',
+    label: 'FG%',
+    align: 'right',
+    sortable: true,
+    render: (p) => {
+      const made = statOrDash(p, 'fg_made') ?? 0;
+      const att = statOrDash(p, 'fg_att') ?? 0;
+      if (att === 0) return <span className="text-slate-500 text-sm">—</span>;
+      return (
+        <span className="text-slate-300 text-sm tabular-nums">
+          {((made / att) * 100).toFixed(1)}
+        </span>
+      );
+    },
+    compare: (a, b) => {
+      const pa = (a.season_stats?.fg_att ?? 0) > 0 ? (a.season_stats!.fg_made ?? 0) / a.season_stats!.fg_att! : -1;
+      const pb = (b.season_stats?.fg_att ?? 0) > 0 ? (b.season_stats!.fg_made ?? 0) / b.season_stats!.fg_att! : -1;
+      return pb - pa;
+    },
+  },
+  fg_long: {
+    key: 'fg_long',
+    label: 'Long',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-400 text-sm tabular-nums">{num(statOrDash(p, 'fg_long'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.fg_long ?? -1) - (a.season_stats?.fg_long ?? -1),
+  },
+  xp_made: {
+    key: 'xp_made',
+    label: 'XPM',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-300 text-sm tabular-nums">{num(statOrDash(p, 'xp_made'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.xp_made ?? -1) - (a.season_stats?.xp_made ?? -1),
+  },
+  xp_att: {
+    key: 'xp_att',
+    label: 'XPA',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-400 text-sm tabular-nums">{num(statOrDash(p, 'xp_att'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.xp_att ?? -1) - (a.season_stats?.xp_att ?? -1),
+  },
+
+  // ── Defense columns ───────────────────────────────────────
+  sacks: {
+    key: 'sacks',
+    label: 'Sack',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-300 text-sm tabular-nums">
+        {num(statOrDash(p, 'sacks'), 1)}
+      </span>
+    ),
+    compare: (a, b) => (b.season_stats?.sacks ?? -1) - (a.season_stats?.sacks ?? -1),
+  },
+  def_int: {
+    key: 'def_int',
+    label: 'INT',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-300 text-sm tabular-nums">{num(statOrDash(p, 'def_int'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.def_int ?? -1) - (a.season_stats?.def_int ?? -1),
+  },
+  fumbles_recovered: {
+    key: 'fumbles_recovered',
+    label: 'FR',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-300 text-sm tabular-nums">
+        {num(statOrDash(p, 'fumbles_recovered'))}
+      </span>
+    ),
+    compare: (a, b) =>
+      (b.season_stats?.fumbles_recovered ?? -1) - (a.season_stats?.fumbles_recovered ?? -1),
+  },
+  def_td: {
+    key: 'def_td',
+    label: 'TD',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-300 text-sm tabular-nums">{num(statOrDash(p, 'def_td'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.def_td ?? -1) - (a.season_stats?.def_td ?? -1),
+  },
+  safeties: {
+    key: 'safeties',
+    label: 'SF',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-400 text-sm tabular-nums">{num(statOrDash(p, 'safeties'))}</span>
+    ),
+    compare: (a, b) => (b.season_stats?.safeties ?? -1) - (a.season_stats?.safeties ?? -1),
+  },
+  points_allowed: {
+    key: 'points_allowed',
+    label: 'PA',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-400 text-sm tabular-nums">
+        {num(statOrDash(p, 'points_allowed'))}
+      </span>
+    ),
+    // Lower PA is better — default desc-toggle still works, but compare ascending by value
+    compare: (a, b) =>
+      (a.season_stats?.points_allowed ?? 9999) - (b.season_stats?.points_allowed ?? 9999),
+  },
+  yards_allowed: {
+    key: 'yards_allowed',
+    label: 'YdA',
+    align: 'right',
+    sortable: true,
+    render: (p) => (
+      <span className="text-slate-400 text-sm tabular-nums">
+        {num(statOrDash(p, 'yards_allowed'))}
+      </span>
+    ),
+    compare: (a, b) =>
+      (a.season_stats?.yards_allowed ?? 999999) - (b.season_stats?.yards_allowed ?? 999999),
+  },
 };
 
 /**
@@ -404,7 +581,7 @@ const POSITIONS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'K', 'DEF'] as const;
 
 export default function PlayerGrid({
   fetcher,
-  columns,
+  columns: columnsProp,
   rowAction,
   initialSort = { key: 'adp', dir: 'asc' },
   title,
@@ -416,6 +593,23 @@ export default function PlayerGrid({
   const [posFilter, setPosFilter] = useState<string>('ALL');
   const [sortKey, setSortKey] = useState(initialSort.key);
   const [sortDir, setSortDir] = useState<SortDir>(initialSort.dir);
+
+  // Resolve columns for the current position filter. Supports both the
+  // static-array and the function form so callers can vary the column set
+  // based on which position tab is active (Kicker/DEF render different stats).
+  const columns = useMemo<ColumnDef[]>(
+    () => (typeof columnsProp === 'function' ? columnsProp(posFilter) : columnsProp),
+    [columnsProp, posFilter]
+  );
+
+  // If the active sort column disappears after a position switch, fall
+  // back to the first sortable column so the grid doesn't render empty.
+  useEffect(() => {
+    if (!columns.find((c) => c.key === sortKey)) {
+      const first = columns.find((c) => c.sortable) || columns[0];
+      if (first) setSortKey(first.key);
+    }
+  }, [columns, sortKey]);
   const [offset, setOffset] = useState(0);
   const [players, setPlayers] = useState<GridPlayer[]>([]);
   const [total, setTotal] = useState(0);
@@ -519,11 +713,13 @@ export default function PlayerGrid({
         {toolbarExtra}
       </div>
 
-      {/* Grid */}
+      {/* Grid — vertical scroll inside the card so the sticky <thead> works.
+           max-h is calc'd from viewport so the table fills the screen without
+           pushing the pagination off the bottom. */}
       <div className="card p-0 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[calc(100vh-260px)]">
           <table className="w-full text-sm">
-            <thead className="bg-slate-800/60 border-b border-slate-700">
+            <thead className="bg-slate-800/95 backdrop-blur border-b border-slate-700 sticky top-0 z-10">
               <tr>
                 {columns.map((c) => {
                   const isSorted = sortKey === c.key;

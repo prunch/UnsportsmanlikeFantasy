@@ -92,9 +92,12 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
+      {/* Main content.
+          max-w-screen-2xl (1536px) is wide enough to fit the Players grid with
+          all its position-specific stat columns on typical desktop monitors,
+          while still centering content comfortably on ultra-wide displays. */}
       <main className="flex-1 overflow-auto">
-        <div className="max-w-6xl mx-auto p-8">
+        <div className="max-w-screen-2xl mx-auto p-8">
           <Outlet />
         </div>
       </main>

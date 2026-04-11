@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../utils/supabase';
 import { AppError } from '../middleware/errorHandler';
+import { runPlayerSync, runDefenseSync } from '../utils/syncPlayersUtil';
 
 const router = Router();
 
@@ -225,6 +226,39 @@ router.put('/config/:key', async (req: AuthRequest, res: Response, next: NextFun
     res.json({ success: true, key });
   } catch (err) {
     next(err);
+  }
+});
+
+// --- PLAYER / DEFENSE SYNC ---
+//
+// These endpoints hit Tank01 and refresh the `players` table. They're exposed
+// as admin HTTP endpoints rather than a CLI script because the canonical
+// workflow is "commissioner clicks a button in the admin panel" — there's no
+// local Node setup in this deployment.
+//
+// Player sync takes ~15s (1 API call) and upserts all ~1800 offensive players.
+// Defense sync is near-instant (1 API call, 32 rows).
+// Both are idempotent — running them twice is safe.
+
+// POST /api/admin/sync-players
+router.post('/sync-players', async (_req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await runPlayerSync();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[admin/sync-players]', err);
+    next(err instanceof Error ? new AppError(`Player sync failed: ${err.message}`, 500) : err);
+  }
+});
+
+// POST /api/admin/sync-defenses
+router.post('/sync-defenses', async (_req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await runDefenseSync();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[admin/sync-defenses]', err);
+    next(err instanceof Error ? new AppError(`Defense sync failed: ${err.message}`, 500) : err);
   }
 });
 

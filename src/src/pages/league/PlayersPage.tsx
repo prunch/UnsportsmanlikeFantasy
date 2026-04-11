@@ -160,101 +160,186 @@ export default function PlayersPage({ league }: { league: League }) {
   }
 
   // ── Column definitions ─────────────────────────────────────
-  const columns: ColumnDef[] = useMemo(
-    () => [
-      PLAYER_GRID_COLUMNS.name,
-      PLAYER_GRID_COLUMNS.adp,
-      PLAYER_GRID_COLUMNS.value_rank,
-      {
-        // Custom version of my_rank — editable in-place
-        key: 'my_rank',
-        label: 'My Rk',
-        align: 'right',
-        sortable: true,
-        render: (p) => {
-          if (editing === p.id) {
-            return (
-              <div className="flex items-center justify-end gap-1">
-                <input
-                  type="number"
-                  min={1}
-                  value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRank(p.id, editValue);
-                    if (e.key === 'Escape') {
-                      setEditing(null);
-                      setEditValue('');
-                    }
-                  }}
-                  className="input w-14 text-right py-1 px-2 text-sm"
-                  autoFocus
-                  disabled={saving}
-                />
-                <button
-                  onClick={() => commitRank(p.id, editValue)}
-                  disabled={saving}
-                  className="text-green-400 hover:text-green-300 disabled:opacity-50"
-                  title="Save"
-                >
-                  <Save size={14} />
-                </button>
-                <button
-                  onClick={() => {
+  // The "My Rk" column is editable in-place, so it has to live in this page
+  // rather than the shared PLAYER_GRID_COLUMNS registry (which only has
+  // read-only cells). We build it once here and then reuse it in every
+  // position-specific column set below.
+  const myRankColumn: ColumnDef = useMemo(
+    () => ({
+      key: 'my_rank',
+      label: 'My Rk',
+      align: 'right',
+      sortable: true,
+      render: (p) => {
+        if (editing === p.id) {
+          return (
+            <div className="flex items-center justify-end gap-1">
+              <input
+                type="number"
+                min={1}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitRank(p.id, editValue);
+                  if (e.key === 'Escape') {
                     setEditing(null);
                     setEditValue('');
-                  }}
-                  className="text-slate-400 hover:text-white"
-                  title="Cancel"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            );
-          }
-          return (
-            <div className="flex items-center justify-end gap-1.5">
-              <span className="text-gridiron-gold text-sm font-semibold tabular-nums">
-                {p.my_rank ?? '—'}
-              </span>
+                  }
+                }}
+                className="input w-14 text-right py-1 px-2 text-sm"
+                autoFocus
+                disabled={saving}
+              />
+              <button
+                onClick={() => commitRank(p.id, editValue)}
+                disabled={saving}
+                className="text-green-400 hover:text-green-300 disabled:opacity-50"
+                title="Save"
+              >
+                <Save size={14} />
+              </button>
               <button
                 onClick={() => {
-                  setEditing(p.id);
-                  setEditValue(String(p.my_rank ?? ''));
+                  setEditing(null);
+                  setEditValue('');
                 }}
-                className="text-slate-500 hover:text-gridiron-gold transition-colors"
-                title="Edit rank"
+                className="text-slate-400 hover:text-white"
+                title="Cancel"
               >
-                <Pencil size={12} />
+                <X size={14} />
               </button>
-              {p.my_rank != null && (
-                <button
-                  onClick={() => clearRank(p.id)}
-                  className="text-slate-500 hover:text-red-400 transition-colors"
-                  title="Remove from my rankings"
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
             </div>
           );
-        },
-        compare: (a, b) => (a.my_rank ?? 9999) - (b.my_rank ?? 9999),
+        }
+        return (
+          <div className="flex items-center justify-end gap-1.5">
+            <span className="text-gridiron-gold text-sm font-semibold tabular-nums">
+              {p.my_rank ?? '—'}
+            </span>
+            <button
+              onClick={() => {
+                setEditing(p.id);
+                setEditValue(String(p.my_rank ?? ''));
+              }}
+              className="text-slate-500 hover:text-gridiron-gold transition-colors"
+              title="Edit rank"
+            >
+              <Pencil size={12} />
+            </button>
+            {p.my_rank != null && (
+              <button
+                onClick={() => clearRank(p.id)}
+                className="text-slate-500 hover:text-red-400 transition-colors"
+                title="Remove from my rankings"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+        );
       },
-      PLAYER_GRID_COLUMNS.proj_ppr,
-      PLAYER_GRID_COLUMNS.proj_ppg,
-      PLAYER_GRID_COLUMNS.bye,
-      PLAYER_GRID_COLUMNS.last_ppr,
-      PLAYER_GRID_COLUMNS.gp,
-      PLAYER_GRID_COLUMNS.pass_yds,
-      PLAYER_GRID_COLUMNS.pass_td,
-      PLAYER_GRID_COLUMNS.rush_yds,
-      PLAYER_GRID_COLUMNS.rush_td,
-      PLAYER_GRID_COLUMNS.rec,
-      PLAYER_GRID_COLUMNS.rec_yds,
-      PLAYER_GRID_COLUMNS.rec_td,
-    ],
+      compare: (a, b) => (a.my_rank ?? 9999) - (b.my_rank ?? 9999),
+    }),
+    // We intentionally depend on everything that can change the rendering
+    // of the cell. myRankings must be here so a re-rank triggers a re-render
+    // of the cell via the parent useCallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [editing, editValue, saving, myRankings]
+  );
+
+  // Position-aware column selector. The parent hands this function to
+  // <PlayerGrid>; whenever the user clicks a position pill the grid calls it
+  // again with the new filter and we return a tailored column set.
+  //
+  // Philosophy:
+  //   • Every view keeps Player / ADP / Rank / My Rk / Proj / Bye / Last (universal).
+  //   • Then we append position-specific stat columns so the table reads like
+  //     a traditional ESPN / Yahoo grid for that position.
+  //   • "ALL" intentionally stays lean — a handful of universal columns —
+  //     because mixing offense + kicker + defense stats on one row is useless.
+  const columnsForPosition = useCallback(
+    (position: string): ColumnDef[] => {
+      const universal: ColumnDef[] = [
+        PLAYER_GRID_COLUMNS.name,
+        PLAYER_GRID_COLUMNS.adp,
+        PLAYER_GRID_COLUMNS.value_rank,
+        myRankColumn,
+        PLAYER_GRID_COLUMNS.proj_ppr,
+        PLAYER_GRID_COLUMNS.proj_ppg,
+        PLAYER_GRID_COLUMNS.bye,
+        PLAYER_GRID_COLUMNS.last_ppr,
+      ];
+
+      switch (position) {
+        case 'QB':
+          return [
+            ...universal,
+            PLAYER_GRID_COLUMNS.gp,
+            PLAYER_GRID_COLUMNS.pass_yds,
+            PLAYER_GRID_COLUMNS.pass_td,
+            PLAYER_GRID_COLUMNS.rush_yds,
+            PLAYER_GRID_COLUMNS.rush_td,
+          ];
+        case 'RB':
+          return [
+            ...universal,
+            PLAYER_GRID_COLUMNS.gp,
+            PLAYER_GRID_COLUMNS.rush_yds,
+            PLAYER_GRID_COLUMNS.rush_td,
+            PLAYER_GRID_COLUMNS.targets,
+            PLAYER_GRID_COLUMNS.rec,
+            PLAYER_GRID_COLUMNS.rec_yds,
+            PLAYER_GRID_COLUMNS.rec_td,
+          ];
+        case 'WR':
+        case 'TE':
+          return [
+            ...universal,
+            PLAYER_GRID_COLUMNS.gp,
+            PLAYER_GRID_COLUMNS.targets,
+            PLAYER_GRID_COLUMNS.rec,
+            PLAYER_GRID_COLUMNS.rec_yds,
+            PLAYER_GRID_COLUMNS.rec_td,
+          ];
+        case 'K':
+          return [
+            ...universal,
+            PLAYER_GRID_COLUMNS.fg_made,
+            PLAYER_GRID_COLUMNS.fg_att,
+            PLAYER_GRID_COLUMNS.fg_pct,
+            PLAYER_GRID_COLUMNS.fg_long,
+            PLAYER_GRID_COLUMNS.xp_made,
+            PLAYER_GRID_COLUMNS.xp_att,
+          ];
+        case 'DEF':
+          // DEFs drop ADP/Rank/MyRk: they're not typically ranked individually
+          // in pre-draft the same way offensive players are, and the fantasy
+          // points are what matter. We still show projection + bye so the
+          // column is useful for streamer decisions.
+          return [
+            PLAYER_GRID_COLUMNS.name,
+            myRankColumn,
+            PLAYER_GRID_COLUMNS.proj_ppr,
+            PLAYER_GRID_COLUMNS.proj_ppg,
+            PLAYER_GRID_COLUMNS.bye,
+            PLAYER_GRID_COLUMNS.last_ppr,
+            PLAYER_GRID_COLUMNS.sacks,
+            PLAYER_GRID_COLUMNS.def_int,
+            PLAYER_GRID_COLUMNS.fumbles_recovered,
+            PLAYER_GRID_COLUMNS.def_td,
+            PLAYER_GRID_COLUMNS.safeties,
+            PLAYER_GRID_COLUMNS.points_allowed,
+            PLAYER_GRID_COLUMNS.yards_allowed,
+          ];
+        case 'ALL':
+        default:
+          // ALL view: compact, universal columns only — no position-specific
+          // stats, because mixing kicker/defense with offense on a single row
+          // produces a sea of em-dashes.
+          return [...universal, PLAYER_GRID_COLUMNS.gp];
+      }
+    },
+    [myRankColumn]
   );
 
   return (
@@ -286,7 +371,7 @@ export default function PlayersPage({ league }: { league: League }) {
 
       <PlayerGrid
         fetcher={fetcher}
-        columns={columns}
+        columns={columnsForPosition}
         pageSize={2500}
         initialSort={{ key: 'value_rank', dir: 'asc' }}
         refreshKey={refreshKey}
