@@ -60,3 +60,24 @@ export function apiDelete<T>(path: string, token?: string): Promise<T> {
 export function apiPut<T>(path: string, body: unknown, token?: string): Promise<T> {
   return apiFetch<T>(path, { method: 'PUT', body: JSON.stringify(body), token });
 }
+
+/** Upload a file via multipart/form-data (no JSON Content-Type header). */
+export async function apiUpload<T>(path: string, formData: FormData, token?: string): Promise<T> {
+  const API_URL_INNER = import.meta.env.VITE_API_URL || '/api';
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  // Do NOT set Content-Type — browser sets multipart boundary automatically
+
+  const response = await fetch(`${API_URL_INNER}${path}`, {
+    method: 'POST',
+    headers,
+    body: formData
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(error.error || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}

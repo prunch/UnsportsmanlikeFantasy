@@ -9,6 +9,8 @@ import CreateLeaguePage from './pages/CreateLeaguePage';
 import JoinLeaguePage from './pages/JoinLeaguePage';
 import LeaguePage from './pages/LeaguePage';
 import NotificationsPage from './pages/NotificationsPage';
+import SettingsPage from './pages/SettingsPage';
+import ProfilePage from './pages/ProfilePage';
 import AdminPage from './pages/admin/AdminPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminLeaguesPage from './pages/admin/AdminLeaguesPage';
@@ -52,6 +54,8 @@ export default function App() {
         <Route path="/leagues/join" element={<JoinLeaguePage />} />
         <Route path="/leagues/:id/*" element={<LeaguePage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/profile/:userId" element={<ProfilePage />} />
       </Route>
 
       {/* Admin */}

@@ -4,6 +4,7 @@ import { Swords, Trophy, Zap, ChevronRight } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { apiGet } from '../../utils/api';
 import { League } from '../LeaguePage';
+import UserLink from '../../components/UserLink';
 
 interface TeamInfo {
   id: string;
@@ -178,15 +179,22 @@ function TeamRow({
       }`}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <div className="w-9 h-9 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white shrink-0">
-          {team?.user?.display_name?.charAt(0).toUpperCase()}
-        </div>
+        {team?.user?.avatar_url ? (
+          <img src={team.user.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0" />
+        ) : (
+          <div className="w-9 h-9 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white shrink-0">
+            {team?.user?.display_name?.charAt(0).toUpperCase()}
+          </div>
+        )}
         <div className="min-w-0">
           <div className="text-white font-semibold text-sm truncate">
             {team?.team_name || 'TBD'}
           </div>
           <div className="text-slate-500 text-xs truncate">
-            {team?.user?.display_name} &middot; {team?.wins}–{team?.losses}
+            {team?.user ? (
+              <UserLink userId={team.user.id} displayName={team.user.display_name} className="text-slate-500 text-xs" />
+            ) : null}
+            {' '}&middot; {team?.wins}–{team?.losses}
             {team?.ties > 0 ? `–${team.ties}` : ''}
           </div>
         </div>

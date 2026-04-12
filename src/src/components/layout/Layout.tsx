@@ -73,22 +73,35 @@ export default function Layout() {
 
         {/* User */}
         <div className="p-4 border-t border-slate-700">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-full bg-brand-700 flex items-center justify-center text-sm font-bold">
-              {user?.displayName?.charAt(0).toUpperCase() || '?'}
-            </div>
+          <Link to={`/profile/${user?.id}`} className="flex items-center gap-3 mb-3 group">
+            {user?.avatarUrl ? (
+              <img src={user.avatarUrl} alt="" className="w-9 h-9 rounded-full object-cover border border-slate-600 group-hover:border-gridiron-gold transition-colors" />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-brand-700 flex items-center justify-center text-sm font-bold group-hover:ring-1 group-hover:ring-gridiron-gold transition-all">
+                {user?.displayName?.charAt(0).toUpperCase() || '?'}
+              </div>
+            )}
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-white truncate">{user?.displayName}</div>
+              <div className="text-sm font-medium text-white truncate group-hover:text-gridiron-gold transition-colors">{user?.displayName}</div>
               <div className="text-xs text-slate-400 truncate">{user?.email}</div>
             </div>
+          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              to="/settings"
+              className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
+            >
+              <Settings size={14} />
+              Settings
+            </Link>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
+            >
+              <LogOut size={14} />
+              Sign out
+            </button>
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors w-full"
-          >
-            <LogOut size={16} />
-            Sign out
-          </button>
         </div>
       </aside>
 

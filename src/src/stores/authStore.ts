@@ -6,7 +6,9 @@ interface User {
   email: string;
   displayName: string;
   teamName?: string;
-  avatarUrl?: string;
+  avatarUrl?: string | null;
+  username?: string | null;
+  bio?: string;
   role: string;
 }
 

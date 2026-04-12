@@ -3,6 +3,7 @@ import { Trophy, Zap, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuthStore } from '../../stores/authStore';
 import { apiGet } from '../../utils/api';
 import { League } from '../LeaguePage';
+import UserLink from '../../components/UserLink';
 
 interface Team {
   id: string;
@@ -229,11 +230,19 @@ export default function ScoreboardPage({ league }: { league: League }) {
                             <div className="text-white font-semibold text-sm">
                               {homeTeam?.team_name || 'TBD'}
                             </div>
-                            <div className="text-slate-500 text-xs">{homeTeam?.user?.display_name}</div>
+                            <div className="text-slate-500 text-xs">
+                              {homeTeam?.user ? (
+                                <UserLink userId={homeTeam.user.id} displayName={homeTeam.user.display_name} className="text-slate-500 text-xs" />
+                              ) : null}
+                            </div>
                           </div>
-                          <div className="w-10 h-10 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white">
-                            {homeTeam?.user?.display_name?.charAt(0).toUpperCase()}
-                          </div>
+                          {homeTeam?.user?.avatar_url ? (
+                            <img src={homeTeam.user.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white">
+                              {homeTeam?.user?.display_name?.charAt(0).toUpperCase()}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -263,14 +272,22 @@ export default function ScoreboardPage({ league }: { league: League }) {
                       {/* Away Team */}
                       <div className="flex-1">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white">
-                            {awayTeam?.user?.display_name?.charAt(0).toUpperCase()}
-                          </div>
+                          {awayTeam?.user?.avatar_url ? (
+                            <img src={awayTeam.user.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white">
+                              {awayTeam?.user?.display_name?.charAt(0).toUpperCase()}
+                            </div>
+                          )}
                           <div>
                             <div className="text-white font-semibold text-sm">
                               {awayTeam?.team_name || 'TBD'}
                             </div>
-                            <div className="text-slate-500 text-xs">{awayTeam?.user?.display_name}</div>
+                            <div className="text-slate-500 text-xs">
+                              {awayTeam?.user ? (
+                                <UserLink userId={awayTeam.user.id} displayName={awayTeam.user.display_name} className="text-slate-500 text-xs" />
+                              ) : null}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -311,9 +328,13 @@ export default function ScoreboardPage({ league }: { league: League }) {
                   <div className="w-6 text-slate-500 text-sm font-medium text-center">
                     {i < 3 ? ['🥇','🥈','🥉'][i] : i + 1}
                   </div>
-                  <div className="w-9 h-9 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white">
-                    {team.user?.display_name?.charAt(0).toUpperCase()}
-                  </div>
+                  {team.user?.avatar_url ? (
+                    <img src={team.user.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-brand-800 flex items-center justify-center text-sm font-bold text-white">
+                      {team.user?.display_name?.charAt(0).toUpperCase()}
+                    </div>
+                  )}
                   <div className="flex-1">
                     <div className="text-white font-medium text-sm">
                       {team.team_name}
@@ -321,7 +342,11 @@ export default function ScoreboardPage({ league }: { league: League }) {
                         <span className="ml-2 text-xs text-gridiron-gold">You</span>
                       )}
                     </div>
-                    <div className="text-slate-400 text-xs">{team.user?.display_name}</div>
+                    <div className="text-slate-400 text-xs">
+                      {team.user ? (
+                        <UserLink userId={team.user.id} displayName={team.user.display_name} className="text-slate-400 text-xs" />
+                      ) : null}
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="text-white font-semibold text-sm">
