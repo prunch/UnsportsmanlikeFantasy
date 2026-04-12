@@ -14,6 +14,7 @@ import ChatPage from './league/ChatPage';
 import ScoreboardPage from './league/ScoreboardPage';
 import MatchupsPage from './league/MatchupsPage';
 import MatchupDetailPage from './league/MatchupDetailPage';
+import CardPlayPage from './league/CardPlayPage';
 import CommissionerPage from './league/CommissionerPage';
 import LeagueChatWidget from '../components/chat/LeagueChatWidget';
 
@@ -362,6 +363,16 @@ export default function LeaguePage() {
           element={
             league.status === 'active' || league.status === 'playoffs' ? (
               <CardPickPage />
+            ) : (
+              <Navigate to={`/leagues/${id}`} replace />
+            )
+          }
+        />
+        <Route
+          path="cards/play"
+          element={
+            league.status === 'active' || league.status === 'playoffs' ? (
+              <CardPlayPage league={league} />
             ) : (
               <Navigate to={`/leagues/${id}`} replace />
             )

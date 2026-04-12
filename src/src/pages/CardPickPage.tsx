@@ -13,6 +13,7 @@ interface PickSession {
   card_pool: string[];
   picked_ids: string[];
   completed_at: string | null;
+  max_picks: number;
   cards: CardData[];
 }
 
@@ -26,7 +27,9 @@ export default function CardPickPage() {
   const [selected, setSelected] = useState<CardData[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  const MAX_PICKS = 3;
+  // Dynamic: 6 for pre-week-1 seed (empty deck), 3 for normal weeks
+  const MAX_PICKS = session?.max_picks ?? 3;
+  const isSeedPick = MAX_PICKS === 6;
 
   useEffect(() => {
     load();
@@ -125,11 +128,16 @@ export default function CardPickPage() {
       <div className="text-center space-y-2">
         <div className="flex items-center justify-center gap-2 mb-4">
           <Zap size={24} className="text-gridiron-gold" />
-          <h1 className="text-3xl font-bold text-white">Weekly Card Pick</h1>
+          <h1 className="text-3xl font-bold text-white">
+            {isSeedPick ? 'Seed Your Deck' : 'Weekly Card Pick'}
+          </h1>
           <Zap size={24} className="text-gridiron-gold" />
         </div>
         <p className="text-slate-400">
-          Week {session.week} · Flip cards to reveal them, then pick {MAX_PICKS} to add to your stack.
+          {isSeedPick
+            ? `Week ${session.week} · Flip cards and pick ${MAX_PICKS} to seed your starting deck before the season kicks off.`
+            : `Week ${session.week} · Flip cards to reveal them, then pick ${MAX_PICKS} to add to your deck.`
+          }
         </p>
       </div>
 
@@ -200,7 +208,7 @@ export default function CardPickPage() {
       {/* Skip pick */}
       <div className="text-center pt-4 border-t border-slate-700">
         <p className="text-slate-500 text-xs mb-2">
-          Don't want to pick? 3 random cards will be auto-assigned if you skip.
+          Don't want to pick? {MAX_PICKS} random cards will be auto-assigned if you skip.
         </p>
         <button
           onClick={() => navigate(`/leagues/${leagueId}/cards`)}

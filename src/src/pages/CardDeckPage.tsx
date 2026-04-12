@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { apiGet, apiPost } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Layers, Zap, Shield, Eye, RefreshCw } from 'lucide-react';
+import { Layers, Zap, Shield, Eye, RefreshCw, Target } from 'lucide-react';
 import CardStack, { UserCard } from '../components/cards/CardStack';
 import CardPlaySlot, { PlaySlot } from '../components/cards/CardPlaySlot';
 import CardReveal from '../components/cards/CardReveal';
@@ -189,8 +189,15 @@ export default function CardDeckPage() {
             Refresh
           </button>
           <Link
+            to={`/leagues/${leagueId}/cards/play`}
+            className="btn-primary text-sm py-1.5 flex items-center gap-1.5"
+          >
+            <Target size={14} />
+            Play Cards
+          </Link>
+          <Link
             to={`/leagues/${leagueId}/cards/pick`}
-            className="btn-primary text-sm py-1.5"
+            className="btn-secondary text-sm py-1.5"
           >
             + Pick Cards
           </Link>

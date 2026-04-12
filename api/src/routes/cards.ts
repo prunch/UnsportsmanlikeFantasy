@@ -70,7 +70,9 @@ router.get('/leagues/:id/cards', requireAuth, async (req: AuthRequest, res: Resp
 
 // ============================================================
 // WEEKLY PICK — GET /api/leagues/:id/cards/pick
-// Returns existing pick session or generates a fresh one (12 cards)
+// Returns existing pick session or generates a fresh one (12 cards).
+// Pre-week-1 seed: if user has 0 cards in deck, they pick 6.
+// All other weeks: pick 3.
 // ============================================================
 router.get('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -78,6 +80,10 @@ router.get('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res:
     await requireMembership(leagueId, req.user!.id);
 
     const { week, season } = await getLeagueWeek(leagueId);
+
+    // Determine pick limit: 6 for pre-week-1 seed (deck is empty), 3 otherwise
+    const currentStack = await getStackSize(req.user!.id, leagueId);
+    const maxPicks = currentStack === 0 ? 6 : 3;
 
     // Check for existing pick session this week
     const { data: existing } = await supabaseAdmin
@@ -100,6 +106,7 @@ router.get('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res:
       const cardsById = Object.fromEntries((cards || []).map(c => [c.id, c]));
       return res.json({
         ...existing,
+        max_picks: (existing as any).max_picks ?? maxPicks,
         cards: cardIds.map(id => cardsById[id]).filter(Boolean)
       });
     }
@@ -119,7 +126,7 @@ router.get('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res:
     const picked12 = shuffled.slice(0, Math.min(12, shuffled.length));
     const cardIds = picked12.map(c => c.id);
 
-    // Store the pick session
+    // Store the pick session with max_picks baked in
     const { data: session, error: sessionError } = await supabaseAdmin
       .from('weekly_card_picks')
       .insert({
@@ -128,7 +135,8 @@ router.get('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res:
         week,
         season,
         card_pool: cardIds,
-        picked_ids: []
+        picked_ids: [],
+        max_picks: maxPicks
       })
       .select()
       .single();
@@ -143,15 +151,17 @@ router.get('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res:
 
 // ============================================================
 // WEEKLY PICK — POST /api/leagues/:id/cards/pick
-// Body: { cardIds: string[] } — select up to 3 cards from the 12
+// Body: { cardIds: string[] } — select cards from the 12
+// Limit is dynamic: 6 for pre-week-1 seed, 3 otherwise
 // ============================================================
 router.post('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id: leagueId } = req.params;
     await requireMembership(leagueId, req.user!.id);
 
+    // Loose validation first — exact max enforced below from session
     const { cardIds } = z.object({
-      cardIds: z.array(z.string().uuid()).min(1).max(3)
+      cardIds: z.array(z.string().uuid()).min(1).max(6)
     }).parse(req.body);
 
     const { week, season } = await getLeagueWeek(leagueId);
@@ -168,6 +178,12 @@ router.post('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res
 
     if (sessionError || !session) throw new AppError('No pick session found — GET /cards/pick first', 400);
     if (session.completed_at) throw new AppError('Pick session already completed this week', 400);
+
+    // Use the max_picks stored in the session (6 for seed, 3 for normal weeks)
+    const sessionMaxPicks = (session as any).max_picks ?? 3;
+    if (cardIds.length > sessionMaxPicks) {
+      throw new AppError(`You can only pick ${sessionMaxPicks} cards this week`, 400);
+    }
 
     // Validate that all chosen cardIds are in the presented pool
     const pool = session.card_pool as string[];
