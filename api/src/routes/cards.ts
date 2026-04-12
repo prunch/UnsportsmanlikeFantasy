@@ -159,10 +159,14 @@ router.post('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res
     const { id: leagueId } = req.params;
     await requireMembership(leagueId, req.user!.id);
 
-    // Loose validation first — exact max enforced below from session
-    const { cardIds } = z.object({
-      cardIds: z.array(z.string().uuid()).min(1).max(6)
-    }).parse(req.body);
+    // Accepts a single cardId or an array — supports one-at-a-time flips
+    const body = z.object({
+      cardId: z.string().uuid().optional(),
+      cardIds: z.array(z.string().uuid()).min(1).max(6).optional()
+    }).refine(d => d.cardId || d.cardIds, 'Provide cardId or cardIds')
+      .parse(req.body);
+
+    const cardIds = body.cardIds || [body.cardId!];
 
     const { week, season } = await getLeagueWeek(leagueId);
 
@@ -181,16 +185,22 @@ router.post('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res
 
     // Use the max_picks stored in the session (6 for seed, 3 for normal weeks)
     const sessionMaxPicks = (session as any).max_picks ?? 3;
-    if (cardIds.length > sessionMaxPicks) {
-      throw new AppError(`You can only pick ${sessionMaxPicks} cards this week`, 400);
+    const alreadyPicked = (session.picked_ids as string[]) || [];
+    const remaining = sessionMaxPicks - alreadyPicked.length;
+
+    if (remaining <= 0) throw new AppError('You have already picked all your cards this week', 400);
+    if (cardIds.length > remaining) {
+      throw new AppError(`You can only pick ${remaining} more card${remaining !== 1 ? 's' : ''} this week`, 400);
     }
 
-    // Validate that all chosen cardIds are in the presented pool
+    // Validate that all chosen cardIds are in the presented pool and not already picked
     const pool = session.card_pool as string[];
     const invalid = cardIds.filter(id => !pool.includes(id));
     if (invalid.length > 0) throw new AppError('One or more card IDs are not in your pick pool', 400);
+    const dupes = cardIds.filter(id => alreadyPicked.includes(id));
+    if (dupes.length > 0) throw new AppError('Card already picked', 400);
 
-    // Check stack size — v2 deck cap is 12 unplayed cards
+    // Check stack size — deck cap is 12 unplayed cards
     const currentStack = await getStackSize(req.user!.id, leagueId);
     const available = Math.max(0, 12 - currentStack);
     if (available === 0) throw new AppError('Your card stack is full (max 12 cards)', 400);
@@ -209,10 +219,16 @@ router.post('/leagues/:id/cards/pick', requireAuth, async (req: AuthRequest, res
 
     if (insertError) throw new AppError('Failed to add cards to stack', 500);
 
-    // Mark session complete
+    // Update picked_ids; mark complete if all picks used
+    const newPickedIds = [...alreadyPicked, ...toAdd];
+    const isComplete = newPickedIds.length >= sessionMaxPicks;
+
     await supabaseAdmin
       .from('weekly_card_picks')
-      .update({ picked_ids: cardIds, completed_at: new Date().toISOString() })
+      .update({
+        picked_ids: newPickedIds,
+        ...(isComplete ? { completed_at: new Date().toISOString() } : {})
+      })
       .eq('id', session.id);
 
     // Return updated stack
@@ -246,10 +262,11 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
     // target_group is set).
     const playSchema = z.object({
       user_card_id: z.string().uuid(),
+      // play_slot is now optional — auto-determined from card effect_type if omitted
       play_slot: z.enum([
         'own_team', 'opponent', 'any_team',
         'switcheroo', 'buff', 'debuff', 'wild'
-      ]),
+      ]).optional(),
       target_player_id: z.string().optional(),
       target_team_id: z.string().uuid().optional(),
       target_group: z.enum(['QB', 'RB', 'WR', 'TE', 'K', 'DEF']).optional()
@@ -270,41 +287,17 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
 
     if (cardFetchError || !userCard) throw new AppError('Card not found in your stack', 404);
 
-    // Enforce play slot limits: max 1 card per slot per week
-    const { count: slotCount } = await supabaseAdmin
+    // Enforce play limit: max 3 cards per week (any combination of types)
+    const { count: weeklyCount } = await supabaseAdmin
       .from('played_cards')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', req.user!.id)
       .eq('league_id', leagueId)
-      .eq('play_slot', body.play_slot)
       .eq('week', week)
       .eq('season', season);
 
-    if ((slotCount || 0) >= 1) {
-      throw new AppError(`You already played a card in the ${body.play_slot.replace('_', ' ')} slot this week`, 400);
-    }
-
-    // Validate slot-based targeting rules (v1 + v2)
-    if (body.play_slot === 'own_team' && body.target_team_id && body.target_team_id !== teamId) {
-      throw new AppError('The own_team slot must target your own team', 400);
-    }
-    // v2: switcheroo must target caller's own team
-    if (body.play_slot === 'switcheroo' && body.target_team_id && body.target_team_id !== teamId) {
-      throw new AppError('The Switcheroo slot must target your own team', 400);
-    }
-    // v2: buff slot must target caller's own team
-    if (body.play_slot === 'buff' && body.target_team_id && body.target_team_id !== teamId) {
-      throw new AppError('The buff slot must target a player on your own team', 400);
-    }
-    // v2: debuff slot must NOT target caller's own team
-    if (body.play_slot === 'debuff' && body.target_team_id === teamId) {
-      throw new AppError('The debuff slot cannot target your own team', 400);
-    }
-    // v2: wild slot must NOT target caller's own team (opponent check is a
-    // TODO — requires looking up current-week opponent, deferred to the
-    // /cards/play-wild dedicated endpoint)
-    if (body.play_slot === 'wild' && body.target_team_id === teamId) {
-      throw new AppError('The wild slot cannot target your own team', 400);
+    if ((weeklyCount || 0) >= 3) {
+      throw new AppError('You have already played 3 cards this week', 400);
     }
 
     // v2: ensure exactly one of target_player_id / target_group is set,
@@ -318,6 +311,9 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
       throw new AppError('Player-scope cards require a target_player_id', 400);
     }
 
+    // Auto-determine play_slot from card effect_type if not provided
+    const resolvedSlot = body.play_slot || card?.effect_type || 'buff';
+
     // Record the play
     const { data: playedCard, error: playError } = await supabaseAdmin
       .from('played_cards')
@@ -329,7 +325,7 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
         target_player_id: body.target_player_id || null,
         target_team_id: body.target_team_id || null,
         target_group: body.target_group || null,
-        play_slot: body.play_slot,
+        play_slot: resolvedSlot,
         week,
         season
       })
