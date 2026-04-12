@@ -49,16 +49,16 @@ export function Card({ card, faceDown = false, showPickActions = false, onPick, 
     if (disabled) return;
     if (!flipped) {
       setFlipped(true);
+      // In pick mode, flipping the card immediately adds it to deck
+      if (showPickActions && onPick) {
+        onPick(card);
+      }
     }
   }
 
-  // Once the card is face-up in pick mode, clicking the face itself
-  // toggles selection (no separate "Take It" button).
+  // Front face click is a no-op now — the flip itself triggers the pick
   function handleFrontClick() {
-    if (disabled) return;
-    if (!flipped) return;
-    if (!showPickActions || !onPick) return;
-    onPick(card);
+    // nothing — card is already picked on flip
   }
 
   const frontInteractive = flipped && showPickActions && !!onPick && !disabled;
