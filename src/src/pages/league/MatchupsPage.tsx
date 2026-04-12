@@ -5,6 +5,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { apiGet } from '../../utils/api';
 import { League } from '../LeaguePage';
 import UserLink from '../../components/UserLink';
+import { CardData } from '../../components/cards/Card';
 
 interface TeamInfo {
   id: string;
@@ -36,19 +37,45 @@ interface MatchupsResponse {
   matchups: MatchupRow[];
 }
 
+interface PlayedCardEntry {
+  id: string;
+  user_id: string;
+  play_slot: string;
+  card: CardData;
+  target_player_id: string | null;
+  target_team_id: string | null;
+  target_group: string | null;
+}
+
+interface LeaguePlaysResponse {
+  week: number;
+  season: number;
+  locked: boolean;
+  my_plays: PlayedCardEntry[];
+  opponent_plays: PlayedCardEntry[];
+}
+
 export default function MatchupsPage({ league }: { league: League }) {
   const { token, user } = useAuthStore();
   const [data, setData] = useState<MatchupsResponse | null>(null);
+  const [cardPlays, setCardPlays] = useState<LeaguePlaysResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await apiGet<MatchupsResponse>(
-        `/leagues/${league.id}/matchups/current`,
-        token
-      );
-      setData(res);
+      const [matchupRes, playsRes] = await Promise.all([
+        apiGet<MatchupsResponse>(
+          `/leagues/${league.id}/matchups/current`,
+          token
+        ),
+        apiGet<LeaguePlaysResponse>(
+          `/leagues/${league.id}/cards/league-plays`,
+          token
+        ).catch(() => null)
+      ]);
+      setData(matchupRes);
+      if (playsRes) setCardPlays(playsRes);
     } catch {
       // silent
     } finally {
@@ -93,6 +120,15 @@ export default function MatchupsPage({ league }: { league: League }) {
             const isMyMatchup =
               m.home_team?.user?.id === user?.id || m.away_team?.user?.id === user?.id;
 
+            // Count cards targeting each team in this matchup
+            const allVisiblePlays = [
+              ...(cardPlays?.my_plays || []),
+              ...(cardPlays?.opponent_plays || [])
+            ];
+            const homeCardCount = allVisiblePlays.filter(p => p.target_team_id === m.home_team?.id).length;
+            const awayCardCount = allVisiblePlays.filter(p => p.target_team_id === m.away_team?.id).length;
+            const totalCards = homeCardCount + awayCardCount;
+
             return (
               <Link
                 key={m.id}
@@ -112,6 +148,11 @@ export default function MatchupsPage({ league }: { league: League }) {
                     {isMyMatchup && (
                       <span className="text-xs bg-gridiron-gold/20 text-gridiron-gold px-2 py-0.5 rounded-full border border-gridiron-gold/30">
                         Your Matchup
+                      </span>
+                    )}
+                    {totalCards > 0 && (
+                      <span className="text-xs bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/25 flex items-center gap-1">
+                        <Zap size={10} /> {totalCards} card{totalCards !== 1 ? 's' : ''}
                       </span>
                     )}
                   </div>
@@ -140,6 +181,7 @@ export default function MatchupsPage({ league }: { league: League }) {
                     isFinal={m.is_final}
                     isWinner={m.is_final && m.winner_team_id === m.home_team?.id}
                     isLoser={!!(m.is_final && m.winner_team_id && m.winner_team_id !== m.home_team?.id)}
+                    cardCount={homeCardCount}
                   />
                   <div className="text-slate-600 text-xs text-center">vs</div>
                   <TeamRow
@@ -148,6 +190,7 @@ export default function MatchupsPage({ league }: { league: League }) {
                     isFinal={m.is_final}
                     isWinner={m.is_final && m.winner_team_id === m.away_team?.id}
                     isLoser={!!(m.is_final && m.winner_team_id && m.winner_team_id !== m.away_team?.id)}
+                    cardCount={awayCardCount}
                   />
                 </div>
               </Link>
@@ -165,12 +208,14 @@ function TeamRow({
   isFinal,
   isWinner,
   isLoser,
+  cardCount = 0,
 }: {
   team: TeamInfo;
   score: number;
   isFinal: boolean;
   isWinner: boolean;
   isLoser: boolean;
+  cardCount?: number;
 }) {
   return (
     <div
@@ -199,12 +244,20 @@ function TeamRow({
           </div>
         </div>
       </div>
-      <div className="text-right shrink-0 ml-3">
-        <div className="text-white font-bold text-xl tabular-nums">
-          {Number(score || 0).toFixed(1)}
-        </div>
-        <div className="text-slate-500 text-[10px] uppercase tracking-wide">
-          {isFinal ? 'Final' : 'Proj'}
+      <div className="text-right shrink-0 ml-3 flex items-center gap-2">
+        {cardCount > 0 && (
+          <span className="flex items-center gap-0.5 text-amber-400" title={`${cardCount} card${cardCount !== 1 ? 's' : ''} active`}>
+            <Zap size={10} />
+            <span className="text-[10px] font-bold">{cardCount}</span>
+          </span>
+        )}
+        <div>
+          <div className="text-white font-bold text-xl tabular-nums">
+            {Number(score || 0).toFixed(1)}
+          </div>
+          <div className="text-slate-500 text-[10px] uppercase tracking-wide">
+            {isFinal ? 'Final' : 'Proj'}
+          </div>
         </div>
       </div>
     </div>

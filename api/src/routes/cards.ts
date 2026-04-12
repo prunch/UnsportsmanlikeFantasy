@@ -33,6 +33,44 @@ async function getLeagueWeek(leagueId: string): Promise<{ week: number; season: 
   return { week: data.current_week, season: data.season };
 }
 
+/**
+ * Checks if the current NFL week is locked (first game has kicked off).
+ * NFL weeks typically start Thursday ~8:20 PM ET.
+ * We use a simple heuristic: Thursday 8:00 PM ET of the current week.
+ * In production this could be replaced with real schedule data.
+ */
+async function isWeekLocked(leagueId: string): Promise<boolean> {
+  // Get the league status
+  const { data: league } = await supabaseAdmin
+    .from('leagues')
+    .select('status')
+    .eq('id', leagueId)
+    .single();
+
+  // If league hasn't started (still in draft/setup), nothing is locked
+  if (!league || league.status === 'draft' || league.status === 'setup' || league.status === 'pre_draft') {
+    return false;
+  }
+
+  // Default heuristic: Thursday 8:00 PM ET of the current week
+  // This matches when the first NFL game of the week kicks off.
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay(); // 0=Sun, 4=Thu
+  const hour = et.getHours();
+
+  // After Thursday 8 PM ET: locked
+  if (day === 4 && hour >= 20) return true;
+  // Friday or Saturday: locked
+  if (day === 5 || day === 6) return true;
+  // Sunday: locked
+  if (day === 0) return true;
+  // Monday (games might still be on): locked
+  if (day === 1 && hour < 6) return true; // unlock early Tuesday
+
+  return false;
+}
+
 /** Returns count of unplayed cards in a user's stack for a league */
 async function getStackSize(userId: string, leagueId: string): Promise<number> {
   const { count, error } = await supabaseAdmin
@@ -287,6 +325,11 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
 
     if (cardFetchError || !userCard) throw new AppError('Card not found in your stack', 404);
 
+    // Lock check: cannot play new cards after first kickoff
+    if (await isWeekLocked(leagueId)) {
+      throw new AppError('Cards are locked — the first game of the week has kicked off', 400);
+    }
+
     // Enforce play limit: max 3 cards per week (any combination of types)
     const { count: weeklyCount } = await supabaseAdmin
       .from('played_cards')
@@ -341,6 +384,159 @@ router.post('/leagues/:id/cards/play', requireAuth, async (req: AuthRequest, res
       .eq('id', userCard.id);
 
     res.status(201).json({ success: true, played: playedCard });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// UNPLAY A CARD — DELETE /api/leagues/:id/cards/play/:playedCardId
+// Allows a user to take back a played card before first kickoff of the week.
+// Returns the card to their unplayed stack.
+// ============================================================
+router.delete('/leagues/:id/cards/play/:playedCardId', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id: leagueId, playedCardId } = req.params;
+    await requireMembership(leagueId, req.user!.id);
+
+    // Fetch the played card
+    const { data: playedCard, error: fetchErr } = await supabaseAdmin
+      .from('played_cards')
+      .select('*, card:cards(*)')
+      .eq('id', playedCardId)
+      .eq('user_id', req.user!.id)
+      .eq('league_id', leagueId)
+      .single();
+
+    if (fetchErr || !playedCard) throw new AppError('Played card not found', 404);
+
+    // Check lock: cards lock at first kickoff of the week (Thursday ~8:20 PM ET)
+    if (await isWeekLocked(leagueId)) {
+      throw new AppError('Cards are locked — the first game of the week has kicked off', 400);
+    }
+
+    // Remove the played_cards row
+    const { error: deleteErr } = await supabaseAdmin
+      .from('played_cards')
+      .delete()
+      .eq('id', playedCardId);
+
+    if (deleteErr) throw new AppError('Failed to unplay card', 500);
+
+    // Mark the user_card as unplayed again
+    await supabaseAdmin
+      .from('user_cards')
+      .update({ played_at: null })
+      .eq('id', playedCard.user_card_id);
+
+    res.json({ success: true, message: 'Card returned to your stack' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// REASSIGN A CARD — PUT /api/leagues/:id/cards/play/:playedCardId
+// Change the target of an already-played card before lock.
+// ============================================================
+router.put('/leagues/:id/cards/play/:playedCardId', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id: leagueId, playedCardId } = req.params;
+    await requireMembership(leagueId, req.user!.id);
+
+    const reassignSchema = z.object({
+      target_player_id: z.string().optional(),
+      target_team_id: z.string().uuid().optional(),
+      target_group: z.enum(['QB', 'RB', 'WR', 'TE', 'K', 'DEF']).optional()
+    });
+    const body = reassignSchema.parse(req.body);
+
+    // Fetch the played card
+    const { data: playedCard, error: fetchErr } = await supabaseAdmin
+      .from('played_cards')
+      .select('*, card:cards(*)')
+      .eq('id', playedCardId)
+      .eq('user_id', req.user!.id)
+      .eq('league_id', leagueId)
+      .single();
+
+    if (fetchErr || !playedCard) throw new AppError('Played card not found', 404);
+
+    if (await isWeekLocked(leagueId)) {
+      throw new AppError('Cards are locked — the first game of the week has kicked off', 400);
+    }
+
+    // Validate target matches card scope
+    const card = (playedCard as any).card;
+    if (card?.target_scope === 'group' && !body.target_group) {
+      throw new AppError('Group-scope cards require a target_group', 400);
+    }
+    if (card?.target_scope === 'player' && !body.target_player_id) {
+      throw new AppError('Player-scope cards require a target_player_id', 400);
+    }
+
+    // Update the target
+    const { data: updated, error: updateErr } = await supabaseAdmin
+      .from('played_cards')
+      .update({
+        target_player_id: body.target_player_id || null,
+        target_team_id: body.target_team_id || null,
+        target_group: body.target_group || null
+      })
+      .eq('id', playedCardId)
+      .select('*, card:cards(*)')
+      .single();
+
+    if (updateErr) throw new AppError('Failed to reassign card', 500);
+
+    res.json({ success: true, played: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// LEAGUE PLAYED CARDS — GET /api/leagues/:id/cards/league-plays
+// Returns ALL played cards in the league for this week.
+// Own cards always visible. Opponent cards hidden until locked.
+// ============================================================
+router.get('/leagues/:id/cards/league-plays', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id: leagueId } = req.params;
+    await requireMembership(leagueId, req.user!.id);
+
+    const { week, season } = await getLeagueWeek(leagueId);
+    const locked = await isWeekLocked(leagueId);
+
+    // Always return the user's own plays
+    const { data: myPlays } = await supabaseAdmin
+      .from('played_cards')
+      .select('*, card:cards(*)')
+      .eq('league_id', leagueId)
+      .eq('user_id', req.user!.id)
+      .eq('week', week)
+      .eq('season', season);
+
+    let opponentPlays: any[] = [];
+    if (locked) {
+      // After lock, reveal all plays in the league
+      const { data } = await supabaseAdmin
+        .from('played_cards')
+        .select('*, card:cards(*)')
+        .eq('league_id', leagueId)
+        .eq('week', week)
+        .eq('season', season)
+        .neq('user_id', req.user!.id);
+      opponentPlays = data || [];
+    }
+
+    res.json({
+      week,
+      season,
+      locked,
+      my_plays: myPlays || [],
+      opponent_plays: opponentPlays
+    });
   } catch (err) {
     next(err);
   }
