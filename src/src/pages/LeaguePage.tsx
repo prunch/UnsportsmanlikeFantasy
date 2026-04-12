@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { apiGet, apiPost } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers, MessageCircle, Trophy, Shield, ListOrdered, Swords } from 'lucide-react';
+import { Users, ClipboardList, Zap, TrendingUp, Copy, Layers, Trophy, Shield, ListOrdered, Swords } from 'lucide-react';
 import RosterPage from './league/RosterPage';
 import DraftRoomPage from './league/DraftRoomPage';
 import WaiverWirePage from './league/WaiverWirePage';
@@ -15,6 +15,7 @@ import ScoreboardPage from './league/ScoreboardPage';
 import MatchupsPage from './league/MatchupsPage';
 import MatchupDetailPage from './league/MatchupDetailPage';
 import CommissionerPage from './league/CommissionerPage';
+import LeagueChatWidget from '../components/chat/LeagueChatWidget';
 
 export interface League {
   id: string;
@@ -67,7 +68,6 @@ function LeagueNav({ leagueId, status, isCommissioner }: { leagueId: string; sta
     ...(status === 'active' || status === 'playoffs' || status === 'complete'
       ? [{ to: `${base}/scoreboard`, label: 'Scoreboard', icon: <Trophy size={16} /> }]
       : []),
-    { to: `${base}/chat`, label: 'Chat', icon: <MessageCircle size={16} /> },
     ...(isCommissioner
       ? [{ to: `${base}/commissioner`, label: 'Commissioner', icon: <Shield size={16} /> }]
       : [])
@@ -409,6 +409,9 @@ export default function LeaguePage() {
           }
         />
       </Routes>
+
+      {/* Floating chat widget — available on every league sub-route */}
+      <LeagueChatWidget league={league} />
     </div>
   );
 }
