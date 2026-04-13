@@ -335,23 +335,89 @@ router.get('/:id/roster/mine', requireAuth, async (req: AuthRequest, res: Respon
   }
 });
 
-// POST /api/leagues/:id/roster — Move player to a different slot
+// ── Position eligibility rules ──
+// Which player positions are allowed in each roster slot.
+const SLOT_ELIGIBILITY: Record<string, string[]> = {
+  QB: ['QB'],
+  RB: ['RB'], RB2: ['RB'],
+  WR: ['WR'], WR2: ['WR'], WR3: ['WR'],
+  TE: ['TE'],
+  FLEX: ['RB', 'WR', 'TE'],
+  K: ['K'],
+  DEF: ['DEF'],
+  // Bench & IR accept any position
+  BN1: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+  BN2: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+  BN3: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+  BN4: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+  BN5: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+  BN6: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+  IR1: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+  IR2: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'],
+};
+
+/** Check if the league's roster is locked (Thursday 8 PM ET kickoff) */
+async function isRosterLocked(leagueId: string): Promise<boolean> {
+  const { data: league } = await supabaseAdmin
+    .from('leagues')
+    .select('status')
+    .eq('id', leagueId)
+    .single();
+
+  if (!league || league.status === 'draft' || league.status === 'setup' || league.status === 'pre_draft') {
+    return false;
+  }
+
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  const hour = et.getHours();
+
+  if (day === 4 && hour >= 20) return true;
+  if (day === 5 || day === 6) return true;
+  if (day === 0) return true;
+  if (day === 1 && hour < 6) return true;
+  return false;
+}
+
+// POST /api/leagues/:id/roster — Move/swap player to a different slot
+// Enforces position eligibility and Thursday kickoff lock.
 router.post('/:id/roster', requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const teamId = await requireMembership(id, req.user!.id);
     const body = rosterUpdateSchema.parse(req.body);
 
+    // Lock check
+    if (await isRosterLocked(id)) {
+      throw new AppError('Roster is locked — the first game of the week has kicked off', 400);
+    }
+
     // Check player is on team
     const { data: currentEntry, error: fetchError } = await supabaseAdmin
       .from('rosters')
-      .select('id, slot')
+      .select('id, slot, player_id')
       .eq('team_id', teamId)
       .eq('player_id', body.playerId)
       .eq('week', 0)
       .single();
 
     if (fetchError || !currentEntry) throw new AppError('Player not on your roster', 404);
+
+    // Get the moving player's position
+    const { data: movingPlayer } = await supabaseAdmin
+      .from('players')
+      .select('position')
+      .eq('id', body.playerId)
+      .single();
+
+    if (!movingPlayer) throw new AppError('Player not found', 404);
+
+    // Check position eligibility for the target slot
+    const eligible = SLOT_ELIGIBILITY[body.slot];
+    if (eligible && !eligible.includes(movingPlayer.position)) {
+      throw new AppError(`A ${movingPlayer.position} cannot be placed in the ${body.slot} slot`, 400);
+    }
 
     // Check if target slot is occupied
     const { data: occupant } = await supabaseAdmin
@@ -363,6 +429,23 @@ router.post('/:id/roster', requireAuth, async (req: AuthRequest, res: Response, 
       .single();
 
     if (occupant) {
+      // The occupant is moving to the current player's old slot — check eligibility
+      const { data: occupantPlayer } = await supabaseAdmin
+        .from('players')
+        .select('position')
+        .eq('id', occupant.player_id)
+        .single();
+
+      if (occupantPlayer) {
+        const oldSlotEligible = SLOT_ELIGIBILITY[currentEntry.slot];
+        if (oldSlotEligible && !oldSlotEligible.includes(occupantPlayer.position)) {
+          throw new AppError(
+            `Cannot swap — ${occupantPlayer.position} is not eligible for the ${currentEntry.slot} slot`,
+            400
+          );
+        }
+      }
+
       // Swap slots
       await supabaseAdmin
         .from('rosters')
